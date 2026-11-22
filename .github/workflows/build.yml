@@ -287,6 +287,16 @@ jobs:
         with:
           path: dist
 
+      - name: Compress the rootfs image
+        run: |
+          # GitHub rejects release assets of 2 GiB or more, and the raw ext4
+          # image is 4 GiB even though only about 240 MB of it is used. gzip
+          # brings it to roughly 585 MiB, about 7:1.
+          ls -lh dist/rootfs/
+          gzip -9 -k dist/rootfs/rootfs.ext4
+          ls -lh dist/rootfs/rootfs.ext4.gz
+          # Keep the uncompressed file out of the release.
+          rm -f dist/rootfs/rootfs.ext4
       - name: Note about firmware
         run: |
           cat > dist/FIRMWARE.txt <<'EOF'
