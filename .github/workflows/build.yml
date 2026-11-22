@@ -120,7 +120,8 @@ jobs:
           mkdir -p rom gpu-fw
           curl -fL --retry 3 --max-time 1800 -o rom/stock.tgz \
             "https://cdnorg.d.miui.com/$ROM_VERSION/$ROM_FILE"
-          tar -xzf rom/stock.tgz -C rom --strip-components=1 images/vendor.img
+          tar -xzf rom/stock.tgz -C rom --wildcards '*/images/vendor.img'
+          find rom -name 'vendor.img' | while read -r f; do mv -f "$f" rom/images/ 2>/dev/null || { mkdir -p rom/images; mv -f "$f" rom/images/; }; done
           sudo mkdir -p /mnt/vendor
           sudo mount -o loop,ro rom/images/vendor.img /mnt/vendor
           sudo cp /mnt/vendor/firmware/a630_gmu.bin gpu-fw/ 2>/dev/null || true
@@ -227,8 +228,17 @@ jobs:
           mkdir -p rom/images
           # modem.img holds WiFi/BT/ADSP firmware, vendor.img holds the signed
           # zap shader and the speaker amp firmware.
-          tar -xzf rom/stock.tgz -C rom/images --strip-components=1 \
-              images/modem.img images/vendor.img
+          # The archive nests everything under a directory named after the ROM,
+          # so match the two files by pattern instead of assuming a prefix.
+          tar -xzf rom/stock.tgz -C rom --wildcards \
+              '*/images/modem.img' '*/images/vendor.img' || \
+            tar -tzf rom/stock.tgz | head -20
+          mkdir -p rom/images
+          find rom -name 'modem.img' -o -name 'vendor.img' | while read -r f; do
+            echo "  found $f"
+            mv -f "$f" rom/images/
+          done
+          ls -l rom/images/
 
       - name: Install proprietary firmware into the rootfs
         run: |
