@@ -52,16 +52,32 @@ jobs:
           git checkout --quiet FETCH_HEAD
           make -s kernelversion | sed 's/^/  kernel: /'
 
-      - name: Install device tree and patches
+      - name: Install device tree and panel driver
         run: |
           DTS_DIR=kernel/arch/arm64/boot/dts/qcom
           cp "dts/$DTS_NAME.dts" "$DTS_DIR/"
           grep -q "$DTS_NAME.dtb" "$DTS_DIR/Makefile" \
             || printf 'dtb-$(CONFIG_ARCH_QCOM)\t+= %s.dtb\n' "$DTS_NAME" >> "$DTS_DIR/Makefile"
-          for p in patches/*.patch; do
-            echo "  applying $(basename "$p")"
-            patch -p1 -d kernel --forward < "$p" >/dev/null
-          done
+          # The panel driver is a plain source file plus two one-line build
+          # hooks, so nothing here depends on patch context that varies between
+          # kernel trees. build.sh does the same thing locally.
+          PANEL_DIR=kernel/drivers/gpu/drm/panel
+          cp kernel/panel-samsung-ea8074.c "$PANEL_DIR/"
+          if ! grep -q DRM_PANEL_SAMSUNG_EA8074 "$PANEL_DIR/Kconfig"; then
+            cat >> "$PANEL_DIR/Kconfig" <<'EOF'
+
+          config DRM_PANEL_SAMSUNG_EA8074
+          	tristate "Samsung EA8074 DSI cmd mode panel"
+          	depends on OF
+          	depends on DRM_MIPI_DSI
+          	depends on BACKLIGHT_CLASS_DEVICE
+          	help
+          	  Say Y here to enable the Samsung EA8074 AMOLED command mode panel
+          	  (1080x2248@60Hz) found in the Xiaomi Mi 8 and Mi 8 Pro.
+          EOF
+          fi
+          grep -q panel-samsung-ea8074 "$PANEL_DIR/Makefile" \
+            || printf 'obj-$(CONFIG_DRM_PANEL_SAMSUNG_EA8074) += panel-samsung-ea8074.o\n' >> "$PANEL_DIR/Makefile"
 
       - name: Configure
         run: |

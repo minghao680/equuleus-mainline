@@ -70,7 +70,7 @@ scripts/build.sh
 
 Output: `out/boot.img` (64 MiB, ready to flash).
 
-The script copies the device tree into the kernel tree, applies `patches/`,
+The script copies the device tree into the kernel tree, installs the panel driver from `kernel/`,
 installs `config/equuleus.config`, builds `Image.gz` + the DTB, builds the
 initramfs and packs the boot image. Run `scripts/verify-image.py out/boot.img`
 afterwards if you want to see what it checks.
@@ -153,7 +153,7 @@ SoC. The kernel looks dead but was never crashing — the bus was gone.
 
 The fix is to give MDSS an owner: enable `dispcc`, `mdss`, DSI0 and the panel so
 the DPU holds the `mdp0-mem` / `mdp1-mem` votes and shuts its DMA engines down
-when blanked. The panel driver is `patches/0001-drm-panel-add-samsung-ea8074.patch`.
+when blanked. The panel driver lives in `kernel/panel-samsung-ea8074.c`.
 
 Turning CPU idle off (`cpuidle.off=1`) or disabling `cluster-sleep-0` "fixes" the
 symptom too, and both were rejected: they trade away real functionality instead
@@ -166,7 +166,7 @@ of fixing the cause.
 ```
 dts/        the device tree
 initramfs/  the init script that brings up USB
-patches/    kernel patches (the EA8074 panel driver)
+kernel/     the EA8074 panel driver source
 config/     the exact kernel config that was tested
 scripts/    build, initramfs, packaging, verification
 docs/       bring-up notes and a reference device tree

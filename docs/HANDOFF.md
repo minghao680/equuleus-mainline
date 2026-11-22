@@ -251,7 +251,7 @@ ls /sys/bus/platform/drivers/qcom-pon/
 | 路径 | 内容 |
 |---|---|
 | `dts/sdm845-xiaomi-equuleus.dts` | 设备树（TrustZone GPIO 保留、显示管线、面板电源、WiFi 供电） |
-| `patches/0001-drm-panel-add-samsung-ea8074.patch` | EA8074 面板驱动 |
+| `kernel/panel-samsung-ea8074.c` | EA8074 面板驱动源码 |
 | `config/equuleus.config` | 完整内核配置 |
 | `initramfs/init` | 挂 configfs → 建 USB 串口 → 挂根分区 → `switch_root` 到 systemd |
 | `scripts/build.sh` | 端到端构建 |

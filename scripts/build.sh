@@ -55,21 +55,34 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-say "applying kernel patches"
-# Currently a single patch: the Samsung EA8074 DSI panel driver. It is needed so
-# that the DPU has a panel to drive; without it the display controller would be
-# left to the bootloader splash and the SoC deadlocks once the interconnect
-# providers reach sync_state(). See docs/STATUS.md.
-for p in "$REPO"/patches/*.patch; do
-    [ -e "$p" ] || continue
-    name=$(basename "$p")
-    if patch -p1 -d "$KERNEL_SRC" --dry-run --forward < "$p" >/dev/null 2>&1; then
-        patch -p1 -d "$KERNEL_SRC" --forward < "$p" >/dev/null
-        echo "  applied: $name"
-    else
-        echo "  skipped (already applied): $name"
-    fi
-done
+say "installing the panel driver"
+# Shipped as a plain source file rather than a patch: the patch also touches
+# drivers/gpu/drm/panel/Kconfig and Makefile, whose surrounding context differs
+# between kernel trees and makes patch(1) fail. The new file has no such
+# problem, and the two build hooks are single lines.
+PANEL_DIR=$KERNEL_SRC/drivers/gpu/drm/panel
+cp -f "$REPO/kernel/panel-samsung-ea8074.c" "$PANEL_DIR/panel-samsung-ea8074.c"
+
+if ! grep -q 'DRM_PANEL_SAMSUNG_EA8074' "$PANEL_DIR/Kconfig"; then
+    cat >> "$PANEL_DIR/Kconfig" <<'EOF'
+
+config DRM_PANEL_SAMSUNG_EA8074
+	tristate "Samsung EA8074 DSI cmd mode panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here to enable the Samsung EA8074 AMOLED command mode panel
+	  (1080x2248@60Hz) found in the Xiaomi Mi 8 and Mi 8 Pro.
+EOF
+    echo "  added Kconfig entry"
+fi
+
+if ! grep -q 'panel-samsung-ea8074' "$PANEL_DIR/Makefile"; then
+    printf 'obj-$(CONFIG_DRM_PANEL_SAMSUNG_EA8074) += panel-samsung-ea8074.o\n' \
+        >> "$PANEL_DIR/Makefile"
+    echo "  added Makefile entry"
+fi
 
 # -----------------------------------------------------------------------------
 say "installing config"
