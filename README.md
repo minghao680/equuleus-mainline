@@ -24,9 +24,19 @@ The kernel is **not patched**. The whole change is:
 | UART `ttyMSM0` | **yes** — `a84000.serial` probes |
 | UFS storage | **yes** — `SAMSUNG KLUDG4U1EA-B0C1`, 6 LUNs, 123 GB + 4.5 GB |
 | Display controller | **yes** — `msm 1.13.0`, `card0-DSI-1` reports `connected` |
-| Stable operation | **yes** — >130 s uptime (it used to reset every 27 s) |
-| Root filesystem | no — initramfs only |
+| Stable operation | **yes** — no more 27 s reboot loop |
+| **Debian + systemd rootfs** | **yes** — `systemctl is-system-running` → `running` |
 | Touch / WiFi / modem | not enabled |
+
+The end state is a Debian 13 arm64 userland with systemd as PID 1, reachable over
+a USB serial console with automatic root login:
+
+```
+Debian GNU/Linux 13 equuleus ttyGS0
+equuleus login: root (automatic login)
+Linux equuleus 7.1.0-rc1-sdm845 aarch64
+root@equuleus:~#
+```
 
 Tested kernel: `7.1.0-rc1` (`linux-sdm845-7.1-rc1-r0`, the postmarketOS package),
 built with clang 19.1.7 / LLD 19.1.7.
@@ -60,20 +70,32 @@ scripts/build.sh
 
 Output: `out/boot.img` (64 MiB, ready to flash).
 
-The script copies the device tree into the kernel tree, installs
-`config/equuleus.config`, builds `Image.gz` + the DTB, builds the initramfs and
-packs the boot image. Run `scripts/verify-image.py out/boot.img` afterwards if
-you want to see what it checks.
+The script copies the device tree into the kernel tree, applies `patches/`,
+installs `config/equuleus.config`, builds `Image.gz` + the DTB, builds the
+initramfs and packs the boot image. Run `scripts/verify-image.py out/boot.img`
+afterwards if you want to see what it checks.
+
+### Root filesystem
+
+```bash
+scripts/build-rootfs.sh
+```
+
+Builds a Debian arm64 rootfs with systemd, enables a serial getty on the USB
+console with automatic root login, and produces `out/rootfs.ext4`. Needs
+`mmdebstrap`, `arch-test`, `qemu-aarch64-static` and passwordless sudo.
 
 ## Flash
 
 ```bash
-fastboot -s <serial> flash boot out/boot.img
+fastboot -s <serial> flash userdata out/rootfs.ext4
+fastboot -s <serial> flash boot     out/boot.img
 fastboot -s <serial> reboot
 ```
 
-The phone then shows up on the host as a **USB serial port** (CDC-ACM). Open it
-at 115200 8N1 and you get a busybox shell.
+The initramfs mounts the rootfs from the UFS userdata partition and `switch_root`s
+into systemd. If anything fails on the way it drops to a shell on the USB console
+instead of failing silently — that console is the only way into this device.
 
 There is no on-device output: `console=ttyMSM0` only works if you have a 1.8 V
 UART wired to the board, which is why the initramfs brings up USB instead.

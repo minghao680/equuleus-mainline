@@ -35,9 +35,26 @@ card0  renderD128
 | UFS | **working** | `SAMSUNG KLUDG4U1EA-B0C1`, 6 LUNs, 123 GB + 4.5 GB |
 | Display controller (MDSS/DPU) | **working** | `msm 1.13.0`, `card0-DSI-1` reports `connected` |
 | Stable operation | **working** | >130 s uptime instead of a 27 s reboot loop |
-| Root filesystem | absent | initramfs only |
+| Root filesystem | **working** | Debian 13 arm64 on `sda21` |
+| **systemd as PID 1** | **working** | `systemctl is-system-running` → `running`, no failed units |
+| Serial console login | **working** | `serial-getty@ttyGS0` with automatic root login |
 | Touch | not enabled | `stmfts` node exists, regulators untested |
 | WiFi / modem / DSPs | disabled in DT | not needed for headless bring-up |
+
+Verified from inside the system:
+
+```
+root@equuleus:~# cat /proc/1/comm
+systemd
+root@equuleus:~# systemctl is-system-running
+running
+root@equuleus:~# nproc; free -m | head -2
+8
+               total        used        free      shared  buff/cache   available
+Mem:            7608         257        7406          10          78        7351
+root@equuleus:~# df -h / | tail -1
+/dev/sda21      3.9G  214M  3.6G   6% /
+```
 
 ## Two bugs that had to be fixed for this to work at all
 
@@ -89,10 +106,14 @@ downstream device tree.
 
 ## Next steps
 
-1. **Root filesystem with systemd.** `userdata` (`/dev/sda21`, 113 GB, empty) is
-   the natural target. The initramfs would mount it and `switch_root`.
-2. **Touch.** The ST FTS5 node and its `avdd`/`vdd` rails are not enabled yet.
-3. **Charging / fuel gauge.** PMI8998 is present but not configured.
+1. **Grow the root filesystem.** The image is 4 GB inside a 113 GB partition;
+   `resize2fs /dev/sda21` (or `systemd-growfs`, enabled by the `x-systemd.growfs`
+   mount option) reclaims the rest.
+2. **Networking.** `systemd-networkd` is enabled but there is no link yet. USB
+   NCM/RNDIS in the initramfs would give the phone an IP over the same cable that
+   already carries the console, which is the natural way to get `ssh` access.
+3. **Touch.** The ST FTS5 node and its `avdd`/`vdd` rails are not enabled yet.
+4. **Charging / fuel gauge.** PMI8998 is present but not configured.
 
 ## How this was debugged without a UART
 

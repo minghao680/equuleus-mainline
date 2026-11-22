@@ -2,26 +2,35 @@
 # =============================================================================
 # equuleus mainline initramfs
 #
-# Mounts the minimum set of filesystems, brings up a USB CDC-ACM gadget so the
-# host gets a serial console, and hands the shell to it.
+# 1. mount the minimum filesystems
+# 2. bring up a USB CDC-ACM gadget so the host gets a serial console
+# 3. find and mount the root filesystem from UFS
+# 4. switch_root into systemd
 #
-# The configfs mount below is NOT optional. /sys/kernel/config is only a
-# mountpoint; without mounting configfs on it, creating the gadget directory
-# silently fails inside sysfs and the host never sees a USB device, even when
-# DWC3, the PHY and the UDC have all probed correctly.
+# Two details are not optional:
+#
+#   * configfs MUST be mounted on /sys/kernel/config before the gadget is
+#     created. /sys/kernel/config is only a mountpoint; if configfs is missing,
+#     gadget creation silently fails inside sysfs and the host never sees a
+#     device - which makes a perfectly healthy kernel look completely dead.
+#
+#   * if anything goes wrong we drop to a shell on the gadget instead of
+#     failing silently, because this console is the only way into the device.
 # =============================================================================
 
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export HOME=/
 
-report() {
-	echo "[init] $*"
-}
+# Where the Debian rootfs lives: the UFS userdata partition.
+ROOT_PART=${ROOT_PART:-/dev/sda21}
+ROOT_MNT=/mnt/root
 
-fail() {
-	echo "[init] FATAL: $*"
-	echo "[init] dropping to shell on the kernel console"
-	exec /bin/sh
+report() { echo "[init] $*"; }
+
+shell_fallback() {
+	echo "[init] $*"
+	echo "[init] dropping to a shell on the USB console"
+	exec /bin/sh -l </dev/ttyGS0 >/dev/ttyGS0 2>&1
 }
 
 # --- 1. mount the minimum ----------------------------------------------------
@@ -29,11 +38,14 @@ mount -t proc     proc     /proc            2>/dev/null
 mount -t sysfs    sysfs    /sys             2>/dev/null
 mount -t devtmpfs devtmpfs /dev             2>/dev/null || mdev -s 2>/dev/null
 
-mount -t configfs configfs /sys/kernel/config || fail "cannot mount configfs"
+mount -t configfs configfs /sys/kernel/config || {
+	echo "[init] FATAL: cannot mount configfs"
+	exec /bin/sh
+}
 
 report "filesystems mounted"
 
-# --- 2. wait for the UDC -----------------------------------------------------
+# --- 2. USB gadget -----------------------------------------------------------
 i=0
 while [ "$i" -lt 100 ]; do
 	[ -n "$(ls -A /sys/class/udc 2>/dev/null)" ] && break
@@ -42,34 +54,31 @@ while [ "$i" -lt 100 ]; do
 done
 
 UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
-[ -n "$UDC" ] || fail "no UDC - DWC3 did not probe (device tree or driver problem)"
+[ -n "$UDC" ] || shell_fallback "no UDC - DWC3 did not probe"
 
-report "udc: $UDC"
-
-# --- 3. build the ACM gadget -------------------------------------------------
 G=/sys/kernel/config/usb_gadget/g1
-mkdir -p "$G" || fail "cannot create gadget directory"
-cd "$G" || fail "cannot enter $G"
+mkdir -p "$G" || shell_fallback "cannot create gadget directory"
+cd "$G" || shell_fallback "cannot enter $G"
 
-echo 0x1d6b > idVendor          # Linux Foundation
-echo 0x0104 > idProduct         # Multifunction Composite Gadget
+echo 0x1d6b > idVendor
+echo 0x0104 > idProduct
 echo 0x0100 > bcdDevice
 echo 0x0200 > bcdUSB
 
 mkdir -p strings/0x409
-echo "equuleus-mainline"  > strings/0x409/serialnumber
-echo "equuleus-mainline"  > strings/0x409/manufacturer
-echo "equuleus console"   > strings/0x409/product
+echo "equuleus-mainline"      > strings/0x409/serialnumber
+echo "equuleus-mainline"      > strings/0x409/manufacturer
+echo "equuleus Linux console" > strings/0x409/product
 
 mkdir -p configs/c.1
 mkdir -p configs/c.1/strings/0x409
-echo "CDC-ACM console"    > configs/c.1/strings/0x409/configuration
-echo 120                  > configs/c.1/MaxPower
+echo "CDC-ACM console"        > configs/c.1/strings/0x409/configuration
+echo 120                      > configs/c.1/MaxPower
 
 mkdir -p functions/acm.usb0
 ln -sf functions/acm.usb0 configs/c.1/ 2>/dev/null
 
-echo "$UDC" > UDC || fail "cannot bind gadget to UDC"
+echo "$UDC" > UDC || shell_fallback "cannot bind gadget to UDC"
 
 i=0
 while [ "$i" -lt 50 ]; do
@@ -78,16 +87,62 @@ while [ "$i" -lt 50 ]; do
 	sleep 0.1
 done
 
-[ -e /dev/ttyGS0 ] || fail "bound but /dev/ttyGS0 did not appear"
+[ -e /dev/ttyGS0 ] || {
+	echo "[init] bound but /dev/ttyGS0 did not appear"
+	exec /bin/sh
+}
 
-report "gadget bound, /dev/ttyGS0 ready"
+report "gadget bound, console is on /dev/ttyGS0"
 
-# --- 4. hand over the shell --------------------------------------------------
+# From here on, talk to the console rather than to nothing.
+exec >>/dev/ttyGS0 2>&1 </dev/null
+
 echo
 echo "=============================================================="
-echo " mainline Linux on Xiaomi Mi 8 Pro (equuleus)"
+echo " equuleus mainline Linux"
 echo " kernel: $(uname -srm)"
 echo "=============================================================="
 echo
 
-exec /bin/sh -l </dev/ttyGS0 >/dev/ttyGS0 2>&1
+# --- 3. find and mount the root filesystem -----------------------------------
+report "waiting for $ROOT_PART"
+
+i=0
+while [ "$i" -lt 100 ]; do
+	[ -b "$ROOT_PART" ] && break
+	i=$((i + 1))
+	sleep 0.1
+done
+
+if [ ! -b "$ROOT_PART" ]; then
+	shell_fallback "root partition $ROOT_PART never appeared"
+fi
+
+mkdir -p "$ROOT_MNT"
+for attempt in 1 2 3; do
+	if mount -t ext4 -o rw,noatime "$ROOT_PART" "$ROOT_MNT"; then
+		report "root filesystem mounted on $ROOT_MNT (attempt $attempt)"
+		break
+	fi
+	report "mount attempt $attempt failed, retrying"
+	sleep 1
+done
+
+if ! mountpoint -q "$ROOT_MNT" 2>/dev/null && [ ! -f "$ROOT_MNT/sbin/init" ]; then
+	shell_fallback "could not mount a usable root filesystem on $ROOT_PART"
+fi
+
+if [ ! -x "$ROOT_MNT/sbin/init" ]; then
+	shell_fallback "no /sbin/init on the root filesystem"
+fi
+
+report "root: $(cat "$ROOT_MNT/etc/hostname" 2>/dev/null || echo unknown)"
+
+# --- 4. hand over to systemd -------------------------------------------------
+report "switching root to systemd"
+
+mount --move /proc "$ROOT_MNT/proc" 2>/dev/null
+mount --move /sys  "$ROOT_MNT/sys"  2>/dev/null
+mount --move /dev  "$ROOT_MNT/dev"  2>/dev/null
+
+exec switch_root "$ROOT_MNT" /sbin/init
