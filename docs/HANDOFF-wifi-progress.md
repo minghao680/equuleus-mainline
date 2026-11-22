@@ -17,6 +17,8 @@ rmtfs: [RMTFS storage] request for unknown partition '/boot/modem_fsg_oem_2', re
 
 > ⚠️ **2026-11-22 复核纠正**：第二节的判断有误——`modem_fsg_oem_1/2` 的拒绝在本机原厂 Android 上也同样发生，**不是 WiFi 的断点**。真正的下一步是先确认 WLFW 服务有没有注册。详见文末「八、复核结论」。
 
+> ⚠️ **2026-11-22 16:30 二次复核**：第十节的「写内核 `wlan_pd` elf_loader」方向过重。链路里真正缺的是用户态 **`tqftpserv`**（wlanmdsp.mbn 由它经 QRTR-TFTP 供给 modem），不是内核代码。详见文末「十一、二次复核」。
+
 ---
 
 ## 一、已验证成立的部分
@@ -480,3 +482,202 @@ PDR 服务注册。对 WLAN 需要：
 | ath10k | 静默，不知道卡在哪 | probe 完整成功，确认在等 WLFW |
 | 问题定位 | 「WiFi 不工作」 | 「`wlan_pd` 没有 elf_loader」 |
 | 诊断工具 | 无 | `qrtr-lookup` / rmtfs `-v` / ath10k debugfs 全部就位 |
+
+---
+
+## 十一、二次复核（2026-11-22 16:30）：缺的是 tqftpserv，不是内核 elf_loader
+
+复核者：另一路 agent。**结论：§10.4 的「实现内核 `wlan_pd` elf_loader」方向过重，先试最便宜的一步——装用户态 `tqftpserv`。**
+
+### 11.1 先例证据（同架构，均有成功案例）
+
+| 来源 | SoC | 关键结论 |
+|---|---|---|
+| OPPO R11T 主线 WiFi 复盘（HELPMEEADICE 仓库） | SDM660 + WCN3990 | 完整链：`MSS → GLINK/QRTR → 服务发现 → RFSA+RMTFS/EFS → PDR → msm/modem/wlan_pd → **TQFTP 加载 wlanmdsp.mbn** → WLFW → ath10k_snoc → wlan0`。**wlanmdsp.mbn 由 TQFTP（用户态 tqftpserv）供给，不是内核直接加载** |
+| Kali Nethunter bug #9780（OnePlus 6T「fajita」） | **SDM845，与 equuleus 同 SoC** | 修复项 = modem + ADSP + pd-mapper + 设备固件路径；**没有任何一处需要写内核代码** |
+| postmarketOS 的 beryllium（Xiaomi SDM845） | SDM845 | WiFi 正常，设备包装的运行时就是 `rmtfs + pd-mapper + tqftpserv + qrtr-tools` + 设备固件，无自定义内核驱动 |
+| Debian trixie 软件包 | — | 有现成 `tqftpserv`（1.1-4，arm64，依赖 `libqrtr1`），自带 systemd unit；其 changelog 明确「QRTR nameserver 已入内核，无需再依赖 qrtr-ns.service」——与本文 §8.3 判断一致 |
+
+### 11.2 与 §10.4 的差异在哪
+
+`modemuw.jsn` 里 `"provider": "kernel", "service": "elf_loader"` 是 servreg 服务描述名，**不等于要新写内核驱动**：固件字节的实际搬运走 QRTR-TFTP（用户态 `tqftpserv`），域映射由 `pd-mapper` 负责。OPPO R11T 之所以要写内核 memshare 模块，是因为它的**旧 MPSS 需要 RFSA**；Xiaomi 的 MPSS 不需要 RFSA——rmtfs 已经在正常服务 EFS（§1.5），这条链对小米是通的。
+
+equuleus 当前已启用单元（§五）里**没有 `tqftpserv`**——这就是链上唯一缺的一环。
+
+### 11.3 行动清单（给落地者，按序）
+
+1. **装 tqftpserv**：`apt install tqftpserv`（或在 `build-rootfs.sh` 的 mmdebstrap include 列表里加 `tqftpserv`，重做 rootfs）。systemd 单元是 `tqftpserv.service`，默认 serve `/lib/firmware`。
+2. **对齐固件路径**：tqftpserv 把请求里的 `/readonly/firmware/...` 映射到 `/lib/firmware/...`（OPPO 实测请求 `/readonly/firmware/image/wlanmdsp.mbn` → 落盘 `/lib/firmware/image/wlanmdsp.mbn`）。已提取的原厂 `wlanmdsp.mbn`（3.6 MB）现在放在 `/lib/firmware/qcom/sdm845/mi8/`，这个位置 tqftpserv 够不着——先起服务看 `journalctl -u tqftpserv` 里 modem 请求的确切路径，再 `mkdir -p /lib/firmware/image` 放/软链一份到对应位置。
+3. **重启 modem**（§6.2 的 stop/start），盯三处：
+   - `journalctl -u tqftpserv`：出现 wlanmdsp.mbn 的传输块计数
+   - `qrtr-lookup`：出现 Service 69（WLFW）
+   - `dmesg | grep -iE 'ath10k|wlfw'`：QMI 握手开始
+4. 出现 Service 69 后 ath10k 会自动握手，`ip -br link` 应见 `wlan0`。
+5. **只有**在 tqftpserv 已正确 serve、`pd-mapper -v` 也确认发布了 `wlan_pd` 域之后，仍无 Service 69，才回到 §10 的「自写 elf_loader」或 board 文件/CE 通道排查。
+
+### 11.4 顺带确认 pd-mapper 真的发布了 wlan_pd 域
+
+`pd-mapper` 运行中无输出。前台跑一次 `pd-mapper -v`，确认它读到了 `modemuw.jsn` 并发布 `msm/modem/wlan_pd`（instance 180）。若它根本没读 `.jsn`（搜索路径不匹配，Kali 记录它搜 `/lib/firmware/updates/...`），那是比 tqftpserv 更靠前的一环，需先对齐 `.jsn` 落盘位置。
+
+---
+
+## 十二、tqftpserv 到位了，只剩路径前缀（2026-11-22 16:45）
+
+§11 的判断**完全正确**——缺的就是 `tqftpserv`，不需要写内核代码。装上之后链路立刻活了一半。
+
+### 12.1 modem 开始通过 TQFTP 请求固件了
+
+```
+tqftpserv: invalid path /readonly/vendor/firmware_mnt/image/wlanmdsp.mbn, rejecting
+tqftpserv: invalid path /readonly/vendor/firmware/wlanmdsp.mbn, rejecting
+tqftpserv: stat failed: No such file or directory   （后续若干条）
+```
+
+**这是整条链第一次被打通**：modem → PDR → TQFTP → 主动请求 `wlanmdsp.mbn`。
+在这之前我们连「modem 会不会要这个文件」都无法确认。
+
+### 12.2 断点：路径前缀白名单不匹配
+
+从 `tqftpserv` 二进制里提取的路径字符串**只有这些**：
+
+```
+/readonly/firmware/image/     ← 唯一允许的只读根
+/lib/firmware/                ← 实际读取位置
+/readwrite/                   ← 可写根
+/tmp/tqftpserv
+/sys/module/firmware_class/parameters/path
+```
+
+而我们的 modem 请求的是 Android 10+ 的新式路径：
+
+```
+/readonly/vendor/firmware_mnt/image/wlanmdsp.mbn
+```
+
+**不在白名单里，在 stat 之前就被拒**（日志明确是 `invalid path ... rejecting`，不是 `stat failed`）。
+所以「把文件放到 `/lib/firmware/image/`」这一步是对的但还不够——请求根本到不了文件系统那一层。
+
+### 12.3 三个可选解法
+
+| 方案 | 做法 | 评价 |
+|---|---|---|
+| **A. 编译上游 tqftpserv 并改前缀** | <https://github.com/andersson/tqftpserv>，把 `/readonly/firmware/image/` 换成或加上 `/readonly/vendor/firmware_mnt/image/` | 最干净，但需要交叉编译 |
+| **B. 二进制补丁** | 两个前缀字符串长度不同，直接替换难；但如果把白名单改成允许 `/readonly/` 前缀就简单 | 快，但脆 |
+| **C. 找更新的 Debian 包或源码版本** | 检查 1.1 之后上游有没有加 vendor 路径支持 | 先查，最省事 |
+
+**建议顺序：C → A → B。**
+
+### 12.4 已经做好的铺垫（不白做）
+
+- `tqftpserv` 已装并启用（`tqftpserv.service`）
+- `/lib/firmware/image/` 已建好，放了 36 个文件：
+  `wlanmdsp.mbn`、`bdwlan.bin`、`mba.mbn`、`modem.mbn` + 27 个 `modem.bNN`、`adsp.mbn`、`cdsp.mbn` 等
+- 前缀一旦修好，这些文件就能直接被 serve
+
+### 12.5 验证方法
+
+前缀修好后重刷并观察三处：
+
+```sh
+journalctl -u tqftpserv --no-pager -n 40     # 应出现传输成功，不再是 rejecting
+qrtr-lookup | grep -E '^\s+69'               # 应出现 Service 69 (WLFW)
+dmesg | grep -i ath10k                       # 应出现固件握手日志
+ip -brief link                               # 应出现 wlan0
+```
+
+### 12.6 一个待确认项
+
+`tqftpserv` 启动时有一条无害但值得注意的日志：
+
+```
+tqftpserv: failed to open ota_firewall/ruleset: No such file or directory
+```
+
+和 WiFi 无关（这是 OTA 防火墙规则），可以忽略。
+
+---
+
+## 十三、✅ WiFi 已跑通（2026-11-22 17:05）
+
+**问题解决。§11 的判断完全正确，而且根因比预期更具体：不是机制问题，是 Debian 包版本落后。**
+
+### 13.1 根因：tqftpserv 版本
+
+| 版本 | 支持路径 | 结果 |
+|---|---|---|
+| Debian **trixie** 1.1-4 | 只有 `/readonly/firmware/image/` | 我们的 modem 报 `invalid path ... rejecting` |
+| Debian **sid** 1.3-1 | 增加了 `/readonly/vendor/firmware/` 和 `/readonly/vendor/firmware_mnt/image/` | **满足 modem 请求** |
+
+上游 `translate.c` 里这两条 define 早就加了：
+
+```c
+#define READONLY_VENDOR_PATH      "/readonly/vendor/firmware/"
+#define READONLY_VENDOR_MNT_PATH  "/readonly/vendor/firmware_mnt/image/"
+```
+
+只是 trixie 的打包还没跟上。换成 sid 的 1.3 之后，`invalid path` 立刻消失。
+
+### 13.2 成功证据
+
+```
+$ qrtr-lookup
+       69       1        0    0    72 ATH10k WLAN firmware service      ← WLFW 注册了
+
+$ dmesg | grep ath10k
+ath10k_snoc 18800000.wifi: qmi chip_id 0x30214 chip_family 0x4001 board_id 0xff
+ath10k_snoc 18800000.wifi: wcn3990 hw1.0 target 0x00000008
+ath10k_snoc 18800000.wifi: firmware ver api 5 features wowlan,mgmt-tx-by-reference,non-bmi
+ath10k_snoc 18800000.wifi: htt-ver 3.73 wmi-op 4 htt-op 3 cal file max-sta 32 hwcrypto 1
+
+$ ip -brief link
+wlan0            UP   2e:0c:c3:8f:a5:ab  <BROADCAST,MULTICAST,UP>
+
+$ iw dev wlan0 scan
+BSS 50:33:f0:9c:8d:66  signal: -32.00 dBm  SSID: ...
+BSS 3a:cd:55:90:eb:a4  signal: -63.00 dBm  SSID: ZQU-WebAuth
+...（扫到 10 个真实网络）
+```
+
+**信号 -32 dBm 说明天线和射频链路完全正常。**
+
+### 13.3 完整依赖清单
+
+| 组件 | 作用 | 备注 |
+|---|---|---|
+| `modem-start` | 启动 modem | `auto_boot = false`，没人启动它 |
+| `rmtfs` | 服务 modem 的 EFS 请求 | |
+| `pd-mapper` | 发布 `wlan_pd` 保护域映射 | |
+| **`tqftpserv` >= 1.3** | **把 `wlanmdsp.mbn` 递给 modem** | 关键，版本 1.1 不行 |
+| `/lib/firmware/image/` | tqftpserv 的映射目标 | 放固件镜像 |
+| `iw` + `libnl-3/200` + `libnl-genl-3/200` | 扫描/关联 | `dpkg-deb -x` 不解决依赖，要手动补 |
+| `wpasupplicant` | WPA 关联 | 已装 |
+| `libzstd1` | tqftpserv 1.3 的依赖 | |
+
+一键安装：`scripts/install-firmware-daemons.sh`
+
+### 13.4 两个无害的残留警告
+
+```
+ath10k_snoc: invalid MAC address; choosing random
+```
+`wlan_mac.bin` 没装，用随机 MAC。不影响功能，想修的话从原厂 `persist` 分区取。
+
+```
+tqftpserv: failed to open ota_firewall/ruleset
+```
+OTA 防火墙规则，与 WiFi 无关。
+
+### 13.5 复盘：三次方向修正
+
+这段排查经历了三轮回退，每次都是后一位接手者纠正前一位的判断：
+
+| 判断 | 谁 | 对错 |
+|---|---|---|
+| 「没有任何代码加载 WCN3990 固件 → 要写内核加载器 + 找 PAS ID」 | 我 | **现象对（确实没人加载），解药错（不该写内核代码）** |
+| 「固件跑在 modem 上，modem 启动就行」 | 复核 1 | **方向对** |
+| 「`modem_fsg_oem_1/2` 被拒是断点，要 patch rmtfs」 | 我 | **错，原厂同样拒绝，是正常备份请求** |
+| 「缺的是用户态 `tqftpserv`，不是内核 elf_loader」 | 复核 2 | **对，直接解决** |
+| 「Debian trixie 的 1.1 太旧，要用 sid 的 1.3」 | 落地发现 | **最终根因** |
+
+**教训：`modemuw.jsn` 里的 `"provider": "kernel"` 是 servreg 的描述名，不是「要写内核驱动」的判据。**
+这个坑让排查多绕了一大圈。

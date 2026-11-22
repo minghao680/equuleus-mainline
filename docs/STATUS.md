@@ -39,8 +39,8 @@ card0  renderD128
 | **systemd as PID 1** | **working** | `systemctl is-system-running` → `running`, no failed units |
 | Serial console login | **working** | `serial-getty@ttyGS0` with automatic root login |
 | Touch | not enabled | `stmfts` node exists, regulators untested |
-| ADSP | **working** | needs a post-boot `remoteproc start`; see below |
-| WiFi | **blocked** | driver binds, firmware never loaded; see below |
+| ADSP | **working** | needs a post-boot `remoteproc start` |
+| **WiFi** | **working** | `wlan0` + `phy0`, scans real networks |
 | Panel backlight | **not controllable** | DSI PLL never locks, so no DCS commands get through |
 
 Verified from inside the system:
@@ -130,38 +130,63 @@ A one-shot systemd unit that writes `start` to
 alternative is to put the firmware into the initramfs, which is what
 distributions do for exactly this reason.
 
-## WiFi: the firmware is never loaded
+## WiFi: works, and it needs no kernel driver
 
-The drivers are now compiled in and `ath10k_snoc` binds:
+This took far longer than it should have because it looks like a kernel problem
+and is not. The chain on SDM845 is entirely in userspace:
 
 ```
-ath10k_snoc 18800000.wifi: supply vdd-3.3-ch1 not found, using dummy regulator
+modem (MSS) -> GLINK/QRTR -> service discovery -> rmtfs/EFS
+            -> PDR msm/modem/wlan_pd
+            -> TQFTP serves wlanmdsp.mbn to the modem
+            -> WLFW QMI service (service 69) registers
+            -> ath10k_snoc -> wlan0
 ```
 
-and then nothing — no `wlan0`, no error, at any debug level.
+ath10k never loads the WCN3990 firmware: it registers a QMI lookup and waits for
+the modem to publish the WLFW service. `modemuw.jsn` declares `wlan_pd` with
+`{ "provider": "kernel", "service": "elf_loader" }`, but that is a servreg
+description, not an instruction to write a kernel driver - the loader role is
+filled by the userspace TFTP server.
 
-The reason is in the code: `ath10k` **never loads the WCN3990 firmware**. `qmi.c`
-registers for a QMI service and waits for a `WLFW_FW_READY_IND` indication; the
-only `qcom_mdt_load` call in the wireless tree is in `ath12k`. `snoc.c` decides
-between two worlds:
+What is required:
 
-```c
-node = of_get_child_by_name(host_dev->of_node, "wifi-firmware");
-if (!node) {
-        ar_snoc->use_tz = true;
-        return 0;
-}
+| Piece | Note |
+|---|---|
+| `modem-start` | `qcom_q6v5_mss` sets `auto_boot = false`, so nothing starts the modem |
+| `rmtfs` | serves modem EFS requests |
+| `pd-mapper` | publishes the protection-domain mapping for `wlan_pd` |
+| **`tqftpserv` >= 1.3** | **the one that actually bites**: 1.1 only accepts `/readonly/firmware/image/`, this modem asks for `/readonly/vendor/firmware_mnt/image/` |
+| firmware in `/lib/firmware/image/` | where tqftpserv maps the modem's request path onto |
+
+With tqftpserv 1.1 the log reads
+
+```
+tqftpserv: invalid path /readonly/vendor/firmware_mnt/image/wlanmdsp.mbn, rejecting
 ```
 
-With no `wifi-firmware` subnode the driver assumes **TrustZone already booted the
-firmware** — true when the stock bootloader boots Android, not when it boots our
-kernel. Neither the ADSP nor `pwrseq-qcom-wcn` (a power-sequencing driver for
-newer WCN PMUs, compatibles `qcom,wcn3950-pmu` / `qcom,wcn3988-pmu`) loads it.
+and WiFi never appears. With 1.3 the rejections stop and a few seconds later:
 
-Fixing this needs a real firmware loader — the `qcom_mdt_load` +
-`qcom_scm_pas_auth_and_reset` sequence that `ath12k` performs, applied to
-WCN3990 — not a configuration change. The firmware blobs and the device tree node
-are already in place, so the remaining work is code.
+```
+ath10k_snoc 18800000.wifi: qmi chip_id 0x30214 chip_family 0x4001
+ath10k_snoc 18800000.wifi: wcn3990 hw1.0 target 0x00000008
+ath10k_snoc 18800000.wifi: htt-ver 3.73 wmi-op 4 htt-op 3 hwcrypto 1
+```
+
+```
+$ ip -brief link
+wlan0            UP   2e:0c:c3:8f:a5:ab  <BROADCAST,MULTICAST,UP>
+
+$ iw dev wlan0 scan
+BSS 50:33:f0:9c:8d:66  signal: -32.00 dBm  SSID: ...
+```
+
+Two harmless leftovers: `invalid MAC address; choosing random` because
+`wlan_mac.bin` is not installed, and `ota_firewall/ruleset` write failures from
+tqftpserv, which are unrelated to WiFi.
+
+`scripts/install-firmware-daemons.sh` does all of the above, including pulling
+tqftpserv from sid rather than trixie.
 
 ## Panel backlight: not controllable on a dead panel
 
