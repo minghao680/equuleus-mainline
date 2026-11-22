@@ -744,6 +744,23 @@
 };
 
 /*
+ * Bluetooth runs its UART at 3.2 Mbaud, and geni_serial_set_rate() asks for
+ * baud * 16 = 51.2 MHz. The reference table in sdm845.dtsi only lists
+ * 50/75/100/128 MHz, so the closest match is 50 MHz and the integer divider
+ * yields 3.125 Mbaud - a -2.34% error that sits at the edge of UART tolerance
+ * and shows up as garbled HCI frames (-EILSEQ, "Frame reassembly failed (-84)").
+ *
+ * Lower rates are far worse (1 Mbaud lands at -21.9%), so the exact rate is the
+ * only real fix.
+ */
+&qup_opp_table {
+	opp-51200000 {
+		opp-hz = /bits/ 64 <51200000>;
+		required-opps = <&rpmhpd_opp_low_svs>;
+	};
+};
+
+/*
  * Adreno 630.
  *
  * The zap shader is signed by Xiaomi and is not redistributable: it has to be
