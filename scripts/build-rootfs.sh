@@ -105,6 +105,16 @@ sudo -n mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
 sudo -n ln -sf /etc/systemd/system/adsp-start.service \
     "$ROOT/etc/systemd/system/multi-user.target.wants/adsp-start.service"
 
+# The modem needs the same treatment, and it matters even more: the WCN3990
+# Wi-Fi firmware runs on the modem, and qcom_q6v5_mss has auto_boot = false, so
+# without this the WLFW QMI service never appears and ath10k waits forever.
+sudo -n install -m 755 "$REPO/systemd/start-modem.sh" \
+    "$ROOT/usr/local/sbin/start-modem.sh"
+sudo -n install -m 644 "$REPO/systemd/modem-start.service" \
+    "$ROOT/etc/systemd/system/modem-start.service"
+sudo -n ln -sf /etc/systemd/system/modem-start.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/modem-start.service"
+
 # -----------------------------------------------------------------------------
 say "creating the ext4 image"
 rm -f "$IMG"

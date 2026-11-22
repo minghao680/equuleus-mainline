@@ -1,0 +1,17 @@
+[Unit]
+Description=Start the modem (MPSS) remoteproc
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/HANDOFF.md
+# The WCN3990 firmware runs on the modem and qcom_q6v5_mss sets auto_boot =
+# false, so nothing starts it on its own and ath10k waits forever for the WLFW
+# QMI service. Remoteproc is built in and probes before the root filesystem is
+# mounted, so the firmware is only reachable from userspace.
+After=local-fs.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/start-modem.sh
+
+[Install]
+WantedBy=multi-user.target

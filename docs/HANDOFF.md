@@ -92,7 +92,7 @@ root@equuleus:~# df -h / | tail -1
 | 显示控制器 | ✅ `msm 1.13.0`，`card0-DSI-1` = `connected`（但 PLL 不锁，面板不亮） |
 | Debian 13 + systemd | ✅ `serial-getty@ttyGS0` root 自动登录 |
 | ADSP | ✅ 需要开机后手动 `start`（见 4.1） |
-| **WiFi** | ❌ **固件没被加载，见第 5 节** |
+| **WiFi** | ❌ **modem（MPSS）从未启动，WLFW QMI 服务永远不出现；根因与路线见第 5 节** |
 | 触摸 / 音频 / 基带 | 未启用 |
 
 ---
@@ -147,12 +147,13 @@ ath10k_snoc 18800000.wifi: snoc probe          ← probe 成功结束
 | 安装 `firmware-5.bin` / `board-2.bin` / `wlanmdsp.mbn`（来自 Debian `firmware-atheros`） | ✅ 已就位 |
 | 补齐 `vdd-3.3-ch1-supply` | ✅ 警告消失，但对现象无影响 |
 | 修好 ADSP 并启动 | ✅ ADSP up，但对 ath10k 无影响 |
+| **启动 modem（MPSS）** | **从未做过**——这才是缺失的环节，见 5.3 |
 | 加 `qcom,snoc-host-cap-skip-quirk` | 无影响 |
 | 设 `debug_mask` 全开 | 只有上面那三行 |
 
-### 5.3 关键结论：**没有任何代码在加载 WCN3990 固件**
+### 5.3 根因（2026-11-22 复核）：WLAN 固件由 modem 加载，而 modem 从未启动
 
-这是查证过的，不是推测：
+原结论「没有任何代码在加载 WCN3990 固件」的**事实部分正确**（下表仍成立），但推出的方向——自己写 PAS 加载器、找 WLAN PAS ID——**是错的**。加载者不是缺失的代码，而是 **modem（MPSS）子系统**：SDM845 上 WCN3990 的 WLAN 固件跑在 modem 上，由 TZ/modem 侧负责加载；Linux 侧 ath10k 只负责等 WLFW QMI 服务出现。
 
 | 位置 | 有没有 `wlanmdsp` / `subsystem_get("wlan")` / PAS 调用 |
 |---|---|
@@ -161,31 +162,42 @@ ath10k_snoc 18800000.wifi: snoc probe          ← probe 成功结束
 | 闭源 `qca_cld3_wlan.ko`（9.2 MB，未 strip） | **没有**。未定义符号只有 `request_firmware`，无 PAS/SCM；不内嵌固件 |
 | 主线内核 | **没有**。全树唯一的 `qcom_mdt_load` 在 `ath12k` |
 
-主线 `ath10k` 的机制是：
+**源码证据**（内核树 `/home/claude/sdm845-mainline`，均已逐行核对）：
 
-```c
-/* snoc.c */
-node = of_get_child_by_name(host_dev->of_node, "wifi-firmware");
-if (!node) {
-        ar_snoc->use_tz = true;      /* 假定 TrustZone 已经把固件起好了 */
-        return 0;
-}
-/* qmi.c */
-qmi_add_lookup(&qmi->qmi_hdl, WLFW_SERVICE_ID_V01, ...);   /* 然后就是等 */
-```
+| 证据 | 位置 | 含义 |
+|---|---|---|
+| `rproc->auto_boot = false;` | `drivers/remoteproc/qcom_q6v5_mss.c:2098` | **modem remoteproc 永不自动启动**。对比：ADSP 是 `auto_boot = true`（`qcom_q6v5_pas.c:903`），所以 ADSP 开机会尝试加载并报 `-ENOENT`；modem 连尝试都没有，一行日志都不出 |
+| `qcom_register_sSR_notifier("mpss", ...)` | `ath10k/snoc.c:1556`（`ath10k_modem_init()`，probe 末尾调用，见 snoc.c:1864） | ath10k 显式订阅 modem 的上/下线事件——WLAN 固件随 modem 存亡 |
+| `qcom_add_ssr_subdev(rproc, ..., "mpss")` | `qcom_q6v5_mss.c:2193` | modem 的 SSR 通知名正是 `"mpss"`，与 ath10k 的订阅严格对应 |
+| 无 `wifi-firmware` 子节点 → `use_tz = true` | `ath10k/snoc.c:1624-1627`；且全部上游 sdm845 DTS（db845c、crosshatch、beryllium）都没有该节点 | WLAN 固件由 TZ 侧加载是 SDM845 的**正常设计**，不是本项目缺陷 |
+| `qmi_add_lookup(WLFW_SERVICE_ID_V01, ...)` 后无超时告警 | `ath10k/qmi.c:1115` | probe 结束后 ath10k 只是注册服务查找，对端不出现就永久静默——与「三行日志后再无输出」完全吻合 |
 
-`qmi_add_lookup` 如果对端不响应，是**静默超时**的，不报错。所以「固件没跑」和「固件在跑但握不上」在日志里长得一样。
+**同 SoC 旁证**：
 
-### 5.4 下一步建议（按优先级）
+- Mechres dipper 笔记 §0 原文：*"On SDM845 the WCN3990 Wi-Fi firmware runs on the modem"*——他的机器 modem RF 损坏，因此整机放弃 WiFi。
+- 上游 `sdm845-db845c.dts`、`sdm845-google-crosshatch.dts`（Pixel 3）都是 `&mss_pil` + `&wifi` 同时启用且 WiFi 正常。
 
-1. **确认固件到底有没有在跑。** 目前所有观测都无法区分这两种情况。可以考虑：
-   - 抓 ABL 阶段的行为（需要装回工程固件才能用 adb 读 `logfs`，代价较大）
-   - 或者用示波器/逻辑分析仪看 WCN3990 的复位和供电时序
-2. **如果确认固件没跑**，需要实现一个加载器。参考 `drivers/net/wireless/ath/ath12k/ahb.c` 的做法：
-   `request_firmware` → `qcom_mdt_load` → `qcom_scm_pas_auth_and_reset(pasid)`。
-   **难点是 PAS ID**——在闭源模块和三个内核树里都没找到 sdm845 WLAN 的 PAS ID，可能需要反汇编或实验探测（`qcom_scm_pas_supported` 试一组 ID）。
-3. **如果固件在跑只是握手失败**，重点查 CE 通道和 SMP2P/IRQ，用 `/sys/kernel/debug/ath10k/`（需 `CONFIG_ATH10K_DEBUGFS`）。
-4. **降级方案**：给 initramfs 加 USB NCM/RNDIS，通过同一根线拿到 IP 和 `ssh`。慢但确定能成，且不依赖 WiFi。
+**当前系统 modem 没跑的两个具体原因**：
+
+1. **固件没装**：DT 要求 `qcom/sdm845/mi8/mba.mbn` + `qcom/sdm845/mi8/modem.mbn`，但 `/lib/firmware/qcom/sdm845/mi8/` 里只有 `adsp.*` 和 `cdsp.*`。`mba.mbn`（238,304 B）、`modem.mdt`、`modem.b00..b28` 都在原厂 `modem.img` 的 `image/` 目录里（FAT16，`stock-rom/equuleus_images_V12.5.2.0.QECCNXM_.../images/modem.img`，`7z x` 即可解出），从未提取。
+2. **没人启动它**：`auto_boot = false` 意味着必须有用户态动作，但系统里只有 `adsp-start.service`，没有对应的 modem 启动服务，也没人手动 `echo start` 过。
+
+顺带：Debian `firmware-atheros` 的 `wlanmdsp.mbn`（3,725,044 B）与原厂的（3,645,892 B）不同，且 Linux 本来就不加载它——装不装都不影响，别再在这上面花时间。
+
+### 5.4 修复路线（不需要写任何新驱动，不需要找 PAS ID）
+
+原 5.4 第 2 条（写加载器 / 探测 PAS ID）**作废**：`qcom_q6v5_mss` 就是现成的 modem 加载器，self-authenticating 的认证细节由驱动内部处理。要做的只是把固件摆到它要的路径并 `start`：
+
+1. **提取固件**：从 `modem.img` 解出 `image/mba.mbn`、`image/modem.mdt`、`image/modem.b00..b28`，全部装入 `/lib/firmware/qcom/sdm845/mi8/`，并把 `modem.mdt` 复制一份命名为 `modem.mbn`（与 `adsp.mdt`→`adsp.mbn` 同一招；MSS 驱动在 `qcom_q6v5_mss.c:1554` 只把文件名**末 3 个字符**替换成 `b%02d`，所以段文件按原名摆放即可）。
+2. **启动 modem**：`ls /sys/class/remoteproc/` + `cat .../name` 找到 modem 实例（ADSP 是 remoteproc1，modem 大概率是 remoteproc0），`echo start > /sys/class/remoteproc/remoteprocN/state`。成功标志：`remote processor modem is now up`。
+3. **观察 WiFi**：无需重新 bind ath10k——`qmi_add_lookup` 持续有效，WLFW 服务上线会自动触发握手。盯 `dmesg | grep -iE "remoteproc|qrtr|ath10k|wlfw"`。保险起见也可 unbind/bind（命令见第 8 节）。
+4. **固化**：仿 `adsp-start.service` 加 `modem-start.service`（与 ADSP 互相独立，无先后依赖）。
+5. **如果 modem 起了 WiFi 仍沉默**，按序排查：
+   - `cat /sys/class/remoteproc/remoteproc*/state`——mss 启动失败（mba load 失败、SCM 拒绝等）在 dmesg 有明确报错，不会静默
+   - `ls /sys/kernel/debug/qrtr/`——WLFW 服务（node/service）有没有注册
+   - DT 加 `qcom,calibration-variant`（beryllium 用 `"xiaomi_beryllium"`），非首要
+   - CE 通道 / SMP2P / IRQ（`ATH10K_DBG_QMI` 已随 debug_mask 全开）
+6. **降级方案不变**：USB NCM/RNDIS 走同一根线拿 IP + ssh，与 WiFi 互不影响。
 
 ### 5.5 参考
 
