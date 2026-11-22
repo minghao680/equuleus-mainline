@@ -55,6 +55,13 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+say "applying the tree delta"
+# Files this device tree needs that vanilla mainline lacks. Harmless when the
+# tree already has them (a postmarketOS checkout, for instance) because the
+# copies are identical.
+KERNEL_SRC="$KERNEL_SRC" "$REPO/scripts/apply-tree-delta.sh"
+
+# -----------------------------------------------------------------------------
 say "installing the panel driver"
 # Shipped as a plain source file rather than a patch: the patch also touches
 # drivers/gpu/drm/panel/Kconfig and Makefile, whose surrounding context differs
