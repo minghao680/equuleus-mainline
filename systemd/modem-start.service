@@ -5,7 +5,12 @@ Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/HAN
 # false, so nothing starts it on its own and ath10k waits forever for the WLFW
 # QMI service. Remoteproc is built in and probes before the root filesystem is
 # mounted, so the firmware is only reachable from userspace.
-After=local-fs.target
+#
+# The modem asks the application processor for files and protection-domain
+# mappings as soon as it boots; if nobody answers it asserts after about 43
+# seconds. So rmtfs and pd-mapper have to be up first.
+After=local-fs.target rmtfs.service pd-mapper.service
+Wants=rmtfs.service pd-mapper.service
 DefaultDependencies=no
 
 [Service]
