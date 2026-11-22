@@ -325,6 +325,28 @@ jobs:
               done
           ls -l rom/images/
 
+      - name: Ensure bluetooth.img is available
+        run: |
+          # The extraction step is skipped when the ROM cache hits, and the cache
+          # only ever held modem.img and vendor.img before bluetooth.img was added,
+          # so a cached run would silently build a rootfs with no Bluetooth firmware.
+          # Extracting it here unconditionally makes the result independent of the
+          # cache state.
+          mkdir -p rom/images
+          if [ -f rom/images/bluetooth.img ]; then
+            echo "  already present"
+          elif [ -f rom/stock.tgz ]; then
+            tar -xzf rom/stock.tgz -C rom --wildcards '*/images/bluetooth.img'
+            find rom \( -name 'bluetooth.img' \) -type f | while read -r f; do
+              echo "  found $f"
+              mv -f "$f" rom/images/
+            done
+          else
+            echo "no ROM archive and no bluetooth.img" >&2
+            exit 1
+          fi
+          ls -l rom/images/
+
       - name: Install proprietary firmware into the rootfs
         run: |
           # Cannot be redistributed with the source, but it is reproducible: it
