@@ -150,6 +150,25 @@ jobs:
           sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mdt 2>/dev/null || true
           sudo cp /mnt/vendor/firmware/tas2557_uCDSP.bin gpu-fw/ 2>/dev/null || true
           sudo umount /mnt/vendor
+
+          # The Bluetooth patch and NVM live in their own partition, not in
+          # vendor.img. The controller downloads them from the host at 0.75 s,
+          # before the root filesystem exists, so they belong in the initramfs.
+          tar -xzf rom/stock.tgz -C rom --wildcards '*/images/bluetooth.img'
+          find rom -name 'bluetooth.img' | while read -r f; do mv -f "$f" rom/images/ 2>/dev/null || true; done
+          if [ -f rom/images/bluetooth.img ]; then
+            sudo mkdir -p /mnt/bt
+            sudo mount -o loop,ro rom/images/bluetooth.img /mnt/bt
+            sudo mkdir -p gpu-fw/qca
+            for f in crbtfw21.tlv crnv21.bin crbtfw20.tlv crnv20.bin; do
+              sudo cp "/mnt/bt/image/$f" gpu-fw/qca/ 2>/dev/null || true
+            done
+            sudo umount /mnt/bt
+            ls -l gpu-fw/qca/ || true
+          else
+            echo "bluetooth.img not found in the ROM archive" >&2
+            exit 1
+          fi
           # The SQE blob from the 2021 stock ROM reports version 0x187 and
           # mainline requires 0x190, so take the current one from linux-firmware
           # instead. See docs/gpu-firmware.md.
@@ -187,6 +206,46 @@ jobs:
               "kernel/arch/arm64/boot/Image.gz" \
               "kernel/arch/arm64/boot/dts/qcom/$DTS_NAME.dtb"
           python3 scripts/verify-image.py out/boot.img
+
+      - name: Verify the packed image carries every firmware blob
+        run: |
+          # The initramfs must contain everything that loads before the root
+          # filesystem exists. This has been wrong before: the Bluetooth patch
+          # lives in its own ROM partition, so a build that only read vendor.img
+          # shipped without it and the controller could not start.
+          IMAGE=out/boot.img
+          python3 - "$IMAGE" <<'PY'
+          import gzip, io, os, struct, subprocess, sys, tempfile
+
+          data = open(sys.argv[1], 'rb').read()
+          page = struct.unpack_from('<I', data, 36)[0]
+          kernel_size = struct.unpack_from('<I', data, 8)[0]
+          ramdisk_size = struct.unpack_from('<I', data, 16)[0]
+          off = page + (kernel_size + page - 1) // page * page
+          ramdisk = data[off:off + ramdisk_size]
+
+          with tempfile.NamedTemporaryFile(suffix='.cpio.gz', delete=False) as f:
+              f.write(ramdisk)
+              path = f.name
+
+          listing = subprocess.run(['cpio', '-t'], input=gzip.decompress(open(path,'rb').read()),
+                                   capture_output=True).stdout.decode()
+          os.unlink(path)
+
+          required = [
+              'lib/firmware/qcom/a630_sqe.fw',
+              'lib/firmware/qcom/a630_gmu.bin',
+              'lib/firmware/qcom/a630_zap.mdt',
+              'lib/firmware/tas2557_uCDSP.bin',
+              'lib/firmware/qca/crbtfw21.tlv',
+              'lib/firmware/qca/crnv21.bin',
+          ]
+          missing = [r for r in required if r not in listing]
+          for r in required:
+              print(('  [OK]   ' if r not in missing else '  [MISS] ') + r)
+          if missing:
+              sys.exit(f'{len(missing)} firmware file(s) missing from the initramfs')
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
