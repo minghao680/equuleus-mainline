@@ -123,11 +123,24 @@ jobs:
           tar -xzf rom/stock.tgz -C rom --strip-components=1 images/vendor.img
           sudo mkdir -p /mnt/vendor
           sudo mount -o loop,ro rom/images/vendor.img /mnt/vendor
-          sudo cp /mnt/vendor/firmware/a630_sqe.fw gpu-fw/ 2>/dev/null || true
           sudo cp /mnt/vendor/firmware/a630_gmu.bin gpu-fw/ 2>/dev/null || true
           sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mbn 2>/dev/null || true
           sudo umount /mnt/vendor
+          # The SQE blob from the 2021 stock ROM reports version 0x187 and
+          # mainline requires 0x190, so take the current one from linux-firmware
+          # instead. See docs/gpu-firmware.md.
+          curl -fsSL --retry 3 --max-time 300 -o gpu-fw/a630_sqe.fw \
+            https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/qcom/a630_sqe.fw
           ls -l gpu-fw/
+          python3 - <<'PY'
+          import struct
+          d = open('gpu-fw/a630_sqe.fw','rb').read()
+          buf0 = struct.unpack('<I', d[4:8])[0]
+          ver = buf0 & 0xfff
+          print(f'  SQE ucode version {ver:#x} (need >= 0x190)')
+          if ver < 0x190:
+              raise SystemExit('SQE firmware too old, the GPU will not come up')
+          PY
 
       - name: Build initramfs
         run: |
