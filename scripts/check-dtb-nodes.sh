@@ -14,8 +14,23 @@ DTB=${DTB:-$(cd "$(dirname "$0")/.." && pwd)/out/sdm845-xiaomi-equuleus.dtb}
 [ -f "$DTB" ] || DTB=/home/claude/sdm845-mainline/arch/arm64/boot/dts/qcom/sdm845-xiaomi-equuleus.dtb
 [ -f "$DTB" ] || { echo "找不到 DTB"; exit 1; }
 
+# dtc is not necessarily on PATH: the kernel builds its own at scripts/dtc/dtc, and
+# that is the one guaranteed to understand this DTB. Fall back to a system dtc, and
+# fail with a clear message rather than a bare exit.
+DTC=${DTC:-}
+if [ -z "$DTC" ]; then
+    for cand in \
+        "$(dirname "$DTB")/../../../../../scripts/dtc/dtc" \
+        /home/claude/sdm845-mainline/scripts/dtc/dtc \
+        "$(command -v dtc 2>/dev/null)"
+    do
+        [ -n "$cand" ] && [ -x "$cand" ] && DTC=$cand && break
+    done
+fi
+[ -n "$DTC" ] || { echo "找不到 dtc：设置 DTC=<路径> 指向内核的 scripts/dtc/dtc"; exit 1; }
+
 DTS_OUT=$(mktemp)
-dtc -I dtb -O dts "$DTB" > "$DTS_OUT" 2>/dev/null || { echo "反编译失败"; exit 1; }
+"$DTC" -I dtb -O dts "$DTB" > "$DTS_OUT" 2>/dev/null || { echo "反编译失败 ($DTC)"; exit 1; }
 
 pass=0; fail=0
 
