@@ -79,6 +79,15 @@ check      "BT firmware patch"     lib/firmware/qca/crbtfw21.tlv
 check      "BT firmware NVM"       lib/firmware/qca/crnv21.bin
 
 echo
+echo "=== 4b. bluez 本体 ==="
+# Without these the firmware, clock fix and QUP wrapper all go to waste: the
+# controller comes up but nothing can drive it, and btmgmt cannot set its address.
+check      "bluetooth.service"     usr/lib/systemd/system/bluetooth.service
+check      "bluetoothctl"          usr/bin/bluetoothctl
+check      "btmgmt"                usr/bin/btmgmt
+check      "hciconfig"             usr/bin/hciconfig
+
+echo
 echo "=== 5. 音频 ==="
 check      "amplifier firmware"    lib/firmware/tas2557_uCDSP.bin
 check      "ADSP start unit"       etc/systemd/system/adsp-start.service
