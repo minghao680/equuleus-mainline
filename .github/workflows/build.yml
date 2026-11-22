@@ -44,6 +44,26 @@ jobs:
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             cpio gzip python3 mkbootimg
 
+      - name: Ensure a working mkbootimg
+        run: |
+          # Ubuntu ships mkbootimg with a top-level "from gki... import" but no
+          # gki module, so it dies before doing anything. Debian's build of the
+          # same tool does not, and the package is pure Python (arch all), so
+          # install that one instead of writing our own packer.
+          if mkbootimg 2>&1 | grep -q "No module named 'gki'"; then
+            echo "  Ubuntu mkbootimg is broken, installing Debian's"
+            curl -fsSL --retry 3 --max-time 300 \
+              http://deb.debian.org/debian/dists/trixie/main/binary-all/Packages.gz \
+              -o /tmp/Packages-all.gz
+            FN=$(gzip -dc /tmp/Packages-all.gz \
+              | awk '/^Package: mkbootimg$/{f=1} f&&/^Filename:/{print $2; exit}' || true)
+            echo "  package: $FN"
+            curl -fsSL --retry 3 --max-time 300 -o /tmp/mkbootimg.deb \
+              "http://deb.debian.org/debian/$FN"
+            sudo dpkg -i /tmp/mkbootimg.deb
+          fi
+          mkbootimg 2>&1 | head -2 || true
+
       - name: Fetch kernel source
         run: |
           # Shallow clone of just the tag we target; the tree is large and we

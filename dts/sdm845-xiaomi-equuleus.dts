@@ -30,6 +30,11 @@
  * conflict with pm8998-rpmh-regulators.
  */
 #include "pm8998.dtsi"
+/*
+ * The PMI8998 PMIC carries the charger and the fuel gauge. Board DTSes have to
+ * include this themselves; nothing pulls it in automatically.
+ */
+#include "pmi8998.dtsi"
 
 /*
  * Delete following upstream (sdm845.dtsi) reserved
@@ -648,6 +653,31 @@
 
 		max-speed = <3200000>;
 	};
+};
+
+/* ---------------------------------------------------------------------------
+ * Battery
+ * ------------------------------------------------------------------------- */
+
+/ {
+	battery: battery {
+		compatible = "simple-battery";
+
+		/* equuleus ships a 3000 mAh pack; the downstream tree lists both
+		 * the coslight and the atl variant at that capacity. */
+		charge-full-design-microamp-hours = <3000000>;
+		voltage-min-design-microvolt = <3400000>;
+		voltage-max-design-microvolt = <4400000>;
+	};
+};
+
+&pmi8998_charger {
+	monitored-battery = <&battery>;
+};
+
+&pmi8998_fg {
+	monitored-battery = <&battery>;
+	power-supplies = <&pmi8998_charger>;
 };
 
 /*
