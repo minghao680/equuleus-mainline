@@ -195,3 +195,26 @@ F(51200000, P_GPLL0_OUT_EVEN, 1, 64, 375),
 `apply-tree-delta.sh` 覆盖。与原版 `v7.1-rc1` 的差异**只有这一行**，覆盖安全。
 
 CI 已验证能正确应用并构建（run 45058328716，两个 job 都成功）。
+
+### 端到端路径验证
+
+修复只有在请求值**原样到达** `geni_serial_set_rate()` 时才有效，所以逐层核对：
+
+| 层 | 代码 | 行为 |
+|---|---|---|
+| 1 | `hci_qca: host_set_baudrate(hu, 3200000)` | 直接调用 serdev |
+| 2 | `serdev_device_set_baudrate()` | 转发到控制器 ops |
+| 3 | `qcom_geni_serial_set_termios()` | `baud = uart_get_baud_rate(uport, termios, old, 300, 8000000)` |
+| 4 | `uart_get_baud_rate()` | **`if (baud >= min && baud <= max) return baud;`** |
+| 5 | `geni_serial_set_rate(uport, 3200000)` | `req = 3200000 * 16 = 51,200,000` |
+| 6 | `geni_se_clk_freq_match(se, 51200000, ...)` | 搜索时钟表 |
+| 7 | `clk_round_rate()` → `clk_rcg2_determine_rate()` | 搜索 `rcg->freq_tbl` |
+
+**第 4 层是关键**：`3200000` 落在 `[300, 8000000]` 区间内，所以 `uart_get_baud_rate()`
+在第 41–42 行直接 `return baud`，**不经过任何夹取或改写**。
+
+第 4 层以下的改写逻辑（`tty_termios_encode_baud_rate`）只在超出范围时才触发，
+对本场景不适用。
+
+所以请求值 `3200000` 完整到达第 6 层，`51200000` 完整到达第 7 层，
+新增的 `F(51200000, ...)` 行会被精确命中。
