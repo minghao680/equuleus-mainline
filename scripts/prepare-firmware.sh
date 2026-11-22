@@ -69,7 +69,21 @@ $SUDO umount "$MNT"
 
 # -----------------------------------------------------------------------------
 say "unpacking vendor image"
-$SUDO mount -o loop,ro "$VENDOR" "$MNT"
+# vendor.img in a stock fastboot ROM is an Android sparse image, which cannot be
+# loop-mounted directly:
+#   mount: wrong fs type, bad option, bad superblock
+# Convert it first. modem.img is plain FAT and needs no such step.
+VENDOR_MOUNT=$VENDOR
+if head -c 4 "$VENDOR" 2>/dev/null | od -A n -t x1 | grep -q '3a ff 26 ed'; then
+    command -v simg2img >/dev/null 2>&1 \
+        || die "vendor.img is a sparse image and simg2img is not installed (android-sdk-libsparse-utils)"
+    echo "  sparse image detected, converting"
+    VENDOR_MOUNT=${TMPDIR:-/tmp}/vendor-raw.img
+    simg2img "$VENDOR" "$VENDOR_MOUNT"
+    echo "  converted: $(stat -c%s "$VENDOR_MOUNT") bytes"
+fi
+
+$SUDO mount -o loop,ro "$VENDOR_MOUNT" "$MNT"
 for f in a630_zap.elf a630_sqe.fw a630_gmu.bin tas2557_uCDSP.bin; do
     p=$($SUDO find "$MNT" -name "$f" -type f 2>/dev/null | head -1)
     [ -n "${p:-}" ] || { echo "  not found: $f"; continue; }
