@@ -113,6 +113,20 @@ if [ -n "${GPU_FW_DIR:-}" ] && [ -d "$GPU_FW_DIR" ]; then
         n=$((n + 1))
         break
     done
+
+    # Bluetooth downloads its patch and NVM from the host, and the controller
+    # probes at 0.75 s - also before the root filesystem exists.
+    mkdir -p "$WORK/lib/firmware/qca"
+    for cand in "$GPU_FW_DIR"/qca "$GPU_FW_DIR/../qca"; do
+        [ -d "$cand" ] || continue
+        for f in crbtfw21.tlv crnv21.bin crbtfw20.tlv crnv20.bin; do
+            [ -f "$cand/$f" ] || continue
+            cp -f "$cand/$f" "$WORK/lib/firmware/qca/$f"
+            echo "  qca/$f"
+            n=$((n + 1))
+        done
+        break
+    done
     [ "$n" -gt 0 ] || echo "  none of the a630 files found in $GPU_FW_DIR"
 else
     echo "  GPU_FW_DIR not set - the GPU will not initialise at boot"
