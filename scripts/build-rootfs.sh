@@ -99,11 +99,15 @@ sudo -n umount "$ROOT/sys" "$ROOT/proc" "$ROOT/dev" 2>/dev/null || true
 # The ADSP firmware lives on this filesystem, but remoteproc is a built-in driver
 # and probes before the root is mounted, so it fails with -ENOENT. Start it once
 # more from userspace, where /lib/firmware is reachable.
+# Started at sysinit rather than multi-user: the QDSP6 audio components only
+# register once the ADSP is up, and the sound card probes well before
+# multi-user. At multi-user.target the card sat in "deferred probe pending:
+# error getting cpu dai name" indefinitely.
 sudo -n install -m 644 "$REPO/systemd/adsp-start.service" \
     "$ROOT/etc/systemd/system/adsp-start.service"
-sudo -n mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
+sudo -n mkdir -p "$ROOT/etc/systemd/system/sysinit.target.wants"
 sudo -n ln -sf /etc/systemd/system/adsp-start.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/adsp-start.service"
+    "$ROOT/etc/systemd/system/sysinit.target.wants/adsp-start.service"
 
 # The modem needs starting too: the WCN3990 Wi-Fi firmware runs on it and
 # qcom_q6v5_mss has auto_boot = false. That start is done by `rmtfs -s` - rmtfs

@@ -1,17 +1,27 @@
 [Unit]
 Description=Start the ADSP remoteproc
 Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
-# remoteproc is a built-in driver and probes while the initramfs is still the
+# remoteproc is a built in driver and probes while the initramfs is still the
 # root, so it cannot find firmware that lives on the real root filesystem and
-# fails with -ENOENT. Once the root is mounted the load succeeds, so retry it
-# here.
+# fails with -ENOENT. Starting it again once the root is mounted works.
+#
+# This has to happen early, not at multi-user: the QDSP6 audio components
+# (q6asm-dai and friends) only register once the ADSP is up, and the sound card
+# probes long before multi-user. With this unit at multi-user.target the card
+# stayed in "deferred probe pending: error getting cpu dai name" forever.
+#
+# Before=sysinit.target plus the DefaultDependencies=no means this runs as soon
+# as local-fs is available, which is what the sound card needs.
 After=local-fs.target
+Before=sysinit.target
 DefaultDependencies=no
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
+# The ADSP is on the audio path, so a failure here should not block boot.
+SuccessExitStatus=1
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target
