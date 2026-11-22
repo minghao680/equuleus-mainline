@@ -132,10 +132,15 @@ jobs:
             "https://cdnorg.d.miui.com/$ROM_VERSION/$ROM_FILE"
           tar -xzf rom/stock.tgz -C rom --wildcards '*/images/vendor.img'
           find rom -name 'vendor.img' | while read -r f; do mv -f "$f" rom/images/ 2>/dev/null || { mkdir -p rom/images; mv -f "$f" rom/images/; }; done
+          # vendor.img is an Android sparse image, so it cannot be loop-mounted
+          # as-is: mount reports "wrong fs type, bad option, bad superblock".
+          simg2img rom/images/vendor.img rom/vendor-raw.img
           sudo mkdir -p /mnt/vendor
-          sudo mount -o loop,ro rom/images/vendor.img /mnt/vendor
+          sudo mount -o loop,ro rom/vendor-raw.img /mnt/vendor
           sudo cp /mnt/vendor/firmware/a630_gmu.bin gpu-fw/ 2>/dev/null || true
           sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mbn 2>/dev/null || true
+          sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mdt 2>/dev/null || true
+          sudo cp /mnt/vendor/firmware/tas2557_uCDSP.bin gpu-fw/ 2>/dev/null || true
           sudo umount /mnt/vendor
           # The SQE blob from the 2021 stock ROM reports version 0x187 and
           # mainline requires 0x190, so take the current one from linux-firmware
