@@ -22,9 +22,11 @@ The kernel is **not patched**. The whole change is:
 | RAM | **yes** — 7,797,064 kB detected (8 GB board) |
 | USB CDC-ACM console | **yes** — appears as a serial port on the host |
 | UART `ttyMSM0` | **yes** — `a84000.serial` probes |
-| UFS storage | no — `sync_state() pending due to 1d84000.ufshc` |
+| UFS storage | **yes** — `SAMSUNG KLUDG4U1EA-B0C1`, 6 LUNs, 123 GB + 4.5 GB |
+| Display controller | **yes** — `msm 1.13.0`, `card0-DSI-1` reports `connected` |
+| Stable operation | **yes** — >130 s uptime (it used to reset every 27 s) |
 | Root filesystem | no — initramfs only |
-| Display / touch | not enabled (the panel is physically broken anyway) |
+| Touch / WiFi / modem | not enabled |
 
 Tested kernel: `7.1.0-rc1` (`linux-sdm845-7.1-rc1-r0`, the postmarketOS package),
 built with clang 19.1.7 / LLD 19.1.7.
@@ -115,14 +117,37 @@ seconds later.
 
 ---
 
+### 3. The bootloader leaves MDSS running, and nobody owns it
+
+This is the one that makes the phone reboot every ~27 seconds with **no panic
+message at all**.
+
+The Xiaomi bootloader turns on the display controller to scan out the "Mi" splash
+from DDR and never turns it off. If no Linux driver claims MDSS, nothing votes for
+that memory path. As soon as UFS finishes probing, `qnoc-sdm845` reaches
+`sync_state()`, releases its boot-time bandwidth floors, the orphaned MDSS DMA
+read hits an unvoted path and the NoC deadlocks. The watchdog then resets the
+SoC. The kernel looks dead but was never crashing — the bus was gone.
+
+The fix is to give MDSS an owner: enable `dispcc`, `mdss`, DSI0 and the panel so
+the DPU holds the `mdp0-mem` / `mdp1-mem` votes and shuts its DMA engines down
+when blanked. The panel driver is `patches/0001-drm-panel-add-samsung-ea8074.patch`.
+
+Turning CPU idle off (`cpuidle.off=1`) or disabling `cluster-sleep-0` "fixes" the
+symptom too, and both were rejected: they trade away real functionality instead
+of fixing the cause.
+
+---
+
 ## Repository layout
 
 ```
 dts/        the device tree
 initramfs/  the init script that brings up USB
+patches/    kernel patches (the EA8074 panel driver)
 config/     the exact kernel config that was tested
 scripts/    build, initramfs, packaging, verification
-docs/       bring-up notes
+docs/       bring-up notes and a reference device tree
 ```
 
 ---

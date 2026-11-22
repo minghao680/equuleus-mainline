@@ -34,7 +34,6 @@
 
 	aliases {
 		serial0 = &uart9;
-		display0 = &framebuffer0;
 	};
 
 	chosen {
@@ -42,17 +41,33 @@
 		#size-cells = <2>;
 		ranges;
 
-		stdout-path = "display0";
 
-        /* hack: Use framebuffer setup by the bootloader for simplefb. */
-		framebuffer0: framebuffer@0x9d400000 {
-			compatible = "simple-framebuffer";
-			reg = <0x0 0x9d400000 0x0 (1080 * 2248 * 4)>;
-			width = <1080>;
-			height = <2248>;
-			stride = <(1080 * 4)>;
-			format = "a8r8g8b8";
-		};
+	};
+
+	/*
+	 * Panel rails. The downstream device tree switches both from tlmm gpios
+	 * and expects them on at boot.
+	 */
+	disp_vddio_vreg: regulator-disp-vddio {
+		compatible = "regulator-fixed";
+		regulator-name = "disp_vddio";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&tlmm 23 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <4000>;
+		regulator-boot-on;
+	};
+
+	disp_vci_vreg: regulator-disp-vci {
+		compatible = "regulator-fixed";
+		regulator-name = "disp_vci";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+		gpio = <&tlmm 35 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <4000>;
+		regulator-boot-on;
 	};
 
 	reserved-memory {
@@ -467,7 +482,7 @@
 };
 
 &dispcc {
-	status = "disabled";
+	status = "okay";
 };
 
 &gpu {
@@ -599,4 +614,79 @@
 
 &tlmm {
 	gpio-reserved-ranges = <0 4>, <81 4>;
+};
+
+/*
+ * Display pipeline.
+ *
+ * This is what keeps the SoC alive: it takes MDSS away from the bootloader
+ * splash and gives the DPU a driver that votes for the memory path. See the
+ * comment at the top of this patch for the full failure chain.
+ */
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l26a_1p2>;
+	status = "okay";
+
+	panel@0 {
+		compatible = "samsung,ea8074";
+		reg = <0>;
+
+		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
+		vddio-supply = <&disp_vddio_vreg>;
+		vci-supply = <&disp_vci_vreg>;
+
+		pinctrl-0 = <&sde_dsi_active &sde_te_active>;
+		pinctrl-1 = <&sde_dsi_suspend &sde_te_suspend>;
+		pinctrl-names = "default", "sleep";
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&panel_in>;
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l1a_0p875>;
+	status = "okay";
+};
+
+&tlmm {
+	sde_dsi_active: sde-dsi-active-state {
+		pins = "gpio6";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	sde_dsi_suspend: sde-dsi-suspend-state {
+		pins = "gpio6";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	sde_te_active: sde-te-active-state {
+		pins = "gpio10";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	sde_te_suspend: sde-te-suspend-state {
+		pins = "gpio10";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
 };

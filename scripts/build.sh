@@ -55,6 +55,23 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+say "applying kernel patches"
+# Currently a single patch: the Samsung EA8074 DSI panel driver. It is needed so
+# that the DPU has a panel to drive; without it the display controller would be
+# left to the bootloader splash and the SoC deadlocks once the interconnect
+# providers reach sync_state(). See docs/STATUS.md.
+for p in "$REPO"/patches/*.patch; do
+    [ -e "$p" ] || continue
+    name=$(basename "$p")
+    if patch -p1 -d "$KERNEL_SRC" --dry-run --forward < "$p" >/dev/null 2>&1; then
+        patch -p1 -d "$KERNEL_SRC" --forward < "$p" >/dev/null
+        echo "  applied: $name"
+    else
+        echo "  skipped (already applied): $name"
+    fi
+done
+
+# -----------------------------------------------------------------------------
 say "installing config"
 if [ -f "$KERNEL_SRC/.config" ] && cmp -s "$REPO/config/equuleus.config" "$KERNEL_SRC/.config"; then
     echo "  config already up to date"
