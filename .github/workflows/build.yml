@@ -123,6 +123,14 @@ jobs:
                KALLSYMS_EXTRA_PASS=1 -j"$(nproc)" \
                Image.gz "qcom/$DTS_NAME.dtb"
 
+      - name: Verify device tree nodes
+        run: |
+          # Confirm the nodes this board depends on are enabled in the compiled
+          # DTB. The audio bring-up failed for weeks because gpi_dma0 was
+          # disabled in the reference tree, which is exactly what this catches.
+          DTB=$(find kernel/arch/arm64/boot/dts/qcom -name "$DTS_NAME.dtb" | head -1)
+          DTB="$DTB" scripts/check-dtb-nodes.sh
+
       - name: Fetch GPU firmware from the stock ROM
         run: |
           # msm is built in and loads this during probe, before the root
