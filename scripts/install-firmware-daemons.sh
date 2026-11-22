@@ -39,20 +39,32 @@ sudo -n true 2>/dev/null || die "this script needs passwordless sudo"
 mkdir -p "$WORK"
 cd "$WORK"
 
+# -f and -L both matter here. Without -f curl writes the error page into the
+# output file and still exits 0; without -L it does not follow deb.debian.org's
+# redirect to an actual mirror. Together those produced a silent failure that
+# then looked like a corrupt index.
 fetch_index() {
-    curl -s --max-time 180 "$MIRROR/dists/$1/main/binary-arm64/Packages.gz" -o "$1.gz" \
-        || die "cannot fetch $1 package index"
-    gzip -t "$1.gz" 2>/dev/null || die "invalid package index for $1"
+    curl -fsSL --retry 3 --retry-delay 2 --max-time 900 \
+        "$MIRROR/dists/$1/main/binary-arm64/Packages.gz" -o "$1.gz" \
+        || die "cannot fetch $1 package index from $MIRROR"
+    gzip -t "$1.gz" 2>/dev/null \
+        || die "invalid package index for $1 (mirror did not return gzip)"
 }
 
 fetch_pkg() {
     local suite=$1 pkg=$2
     local fn
-    fn=$(gzip -dc "$suite.gz" | awk -v p="$pkg" '$0=="Package: "p{f=1} f&&/^Filename:/{print $2; exit}')
+    # awk exits as soon as it finds the entry, which closes the pipe and makes
+    # gzip die of SIGPIPE. Under pipefail that turns the whole pipeline into a
+    # failure and, because this runs in a command substitution under set -e,
+    # the script exits with no message at all. Hence the || true.
+    fn=$( { gzip -dc "$suite.gz" 2>/dev/null \
+            | awk -v p="$pkg" '$0=="Package: "p{f=1} f&&/^Filename:/{print $2; exit}'; } || true )
     [ -n "$fn" ] || { echo "  not in $suite: $pkg"; return 1; }
     echo "  $pkg ($suite) -> $fn"
-    [ -f "$pkg.deb" ] || curl -s --max-time 300 -o "$pkg.deb" "$MIRROR/$fn"
-    sudo -n dpkg-deb -x "$pkg.deb" "$ROOT"
+    [ -f "$pkg.deb" ] || curl -fsSL --retry 3 --max-time 600 -o "$pkg.deb" "$MIRROR/$fn" \
+        || { echo "  download failed: $pkg"; return 1; }
+    sudo -n dpkg-deb -x "$pkg.deb" "$ROOT" || { echo "  extract failed: $pkg"; return 1; }
 }
 
 say "fetching package indexes"
@@ -61,7 +73,7 @@ fetch_index sid
 
 say "installing rmtfs and pd-mapper (trixie)"
 fetch_pkg trixie rmtfs
-fetch_pkg trixie pd-mapper
+fetch_pkg trixie protection-domain-mapper
 fetch_pkg trixie libqrtr1
 
 # tqftpserv 1.3 from sid is required: 1.1 rejects the vendor firmware paths this
