@@ -208,13 +208,13 @@ jobs:
         run: |
           # Cross-architecture debootstrap plus the systemd setup. Proprietary
           # firmware is deliberately not included; see scripts/prepare-firmware.sh.
-          ROOT="$PWD/out-rootfs" OUT="$PWD/out" scripts/build-rootfs.sh
+          sudo ROOT="$PWD/out-rootfs" OUT="$PWD/out" scripts/build-rootfs.sh
 
       - name: Install firmware daemons and WiFi tools
         run: |
           # rmtfs, pd-mapper, tqftpserv 1.3 (from sid) and the libnl runtime iw
           # needs. Without these there is no WiFi even with perfect firmware.
-          ROOT="$PWD/out-rootfs" scripts/install-firmware-daemons.sh
+          sudo ROOT="$PWD/out-rootfs" scripts/install-firmware-daemons.sh
 
       - name: Prepare ROM directory
         run: mkdir -p rom
@@ -251,11 +251,15 @@ jobs:
         run: |
           # Cannot be redistributed with the source, but it is reproducible: it
           # comes from Xiaomi's own server, which is why the build does this.
-          ROM_DIR="$PWD/rom/images" ROOT="$PWD/out-rootfs" scripts/prepare-firmware.sh
+          # Run as root: the script uses "sudo -n", which works on a developer
+          # machine with cached credentials but fails on a fresh runner because
+          # there is no timestamp to reuse.
+          sudo ROM_DIR="$PWD/rom/images" ROOT="$PWD/out-rootfs" \
+            scripts/prepare-firmware.sh
 
       - name: Build the image
         run: |
-          ROOT="$PWD/out-rootfs" OUT="$PWD/out" scripts/make-rootfs-image.sh
+          sudo ROOT="$PWD/out-rootfs" OUT="$PWD/out" scripts/make-rootfs-image.sh
           ls -lh out/rootfs.ext4
 
       - uses: actions/upload-artifact@v4

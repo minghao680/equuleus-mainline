@@ -23,7 +23,11 @@
 #
 # usage: scripts/install-firmware-daemons.sh
 # =============================================================================
+
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+. "$SCRIPT_DIR/lib/sudo.sh"
 
 MIRROR=${MIRROR:-http://deb.debian.org/debian}
 ROOT=${ROOT:-$HOME/rootfs-arm64}
@@ -33,7 +37,6 @@ trap 'rm -rf "$WORK"' EXIT
 say() { printf '\n=== %s ===\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-sudo -n true 2>/dev/null || die "this script needs passwordless sudo"
 [ -d "$ROOT" ] || die "rootfs not found: $ROOT"
 
 mkdir -p "$WORK"
@@ -64,7 +67,7 @@ fetch_pkg() {
     echo "  $pkg ($suite) -> $fn"
     [ -f "$pkg.deb" ] || curl -fsSL --retry 3 --max-time 600 -o "$pkg.deb" "$MIRROR/$fn" \
         || { echo "  download failed: $pkg"; return 1; }
-    sudo -n dpkg-deb -x "$pkg.deb" "$ROOT" || { echo "  extract failed: $pkg"; return 1; }
+    $SUDO dpkg-deb -x "$pkg.deb" "$ROOT" || { echo "  extract failed: $pkg"; return 1; }
 }
 
 say "fetching package indexes"
@@ -99,9 +102,9 @@ fetch_pkg trixie util-linux-extra
 # -----------------------------------------------------------------------------
 say "enabling services"
 W="$ROOT/etc/systemd/system/multi-user.target.wants"
-sudo -n mkdir -p "$W"
+$SUDO mkdir -p "$W"
 for u in rmtfs.service pd-mapper.service tqftpserv.service systemd-timesyncd.service; do
-    sudo -n ln -sf "/usr/lib/systemd/system/$u" "$W/$u"
+    $SUDO ln -sf "/usr/lib/systemd/system/$u" "$W/$u"
     echo "  enabled: $u"
 done
 
@@ -112,12 +115,12 @@ say "staging firmware images for tqftpserv"
 SRC="$ROOT/lib/firmware/qcom/sdm845/mi8"
 DEST="$ROOT/lib/firmware/image"
 if [ -d "$SRC" ]; then
-    sudo -n mkdir -p "$DEST"
+    $SUDO mkdir -p "$DEST"
     for f in "$SRC"/*; do
         [ -f "$f" ] || continue
-        sudo -n cp -f "$f" "$DEST/"
+        $SUDO cp -f "$f" "$DEST/"
     done
-    echo "  $(sudo -n ls -1 "$DEST" | wc -l) files staged in /lib/firmware/image"
+    echo "  $($SUDO ls -1 "$DEST" | wc -l) files staged in /lib/firmware/image"
 else
     echo "  warning: $SRC not found - install the modem firmware first"
 fi
@@ -133,5 +136,5 @@ else
 fi
 
 say "rebuilding the ext4 image"
-sudo -n mkdir -p "$ROOT/lib/systemd/system" 2>/dev/null || true
+$SUDO mkdir -p "$ROOT/lib/systemd/system" 2>/dev/null || true
 echo "  rootfs updated; run your image build to produce a flashable image"

@@ -19,20 +19,21 @@
 #
 # usage: scripts/prepare-firmware.sh
 # =============================================================================
+
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+. "$REPO/scripts/lib/sudo.sh"
 ROOT=${ROOT:-$HOME/rootfs-arm64}
 ROM_DIR=${ROM_DIR:-}
 MNT=$(mktemp -d)
-trap 'sudo -n umount "$MNT" 2>/dev/null || true; rmdir "$MNT" 2>/dev/null || true' EXIT
+trap '$SUDO umount "$MNT" 2>/dev/null || true; rmdir "$MNT" 2>/dev/null || true' EXIT
 
 say() { printf '\n=== %s ===\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 [ -n "$ROM_DIR" ] || die "set ROM_DIR to the directory holding modem.img and vendor.img"
 [ -d "$ROOT" ] || die "rootfs not found: $ROOT"
-sudo -n true 2>/dev/null || die "this script needs passwordless sudo"
 
 MODEM=$ROM_DIR/modem.img
 [ -f "$MODEM" ] || die "missing $MODEM"
@@ -45,61 +46,61 @@ done
 
 FW=$ROOT/lib/firmware
 MIIMG=$FW/qcom/sdm845/mi8
-sudo -n mkdir -p "$MIIMG"
+$SUDO mkdir -p "$MIIMG"
 
 # -----------------------------------------------------------------------------
 say "unpacking modem.img"
-sudo -n mount -o loop,ro "$MODEM" "$MNT"
+$SUDO mount -o loop,ro "$MODEM" "$MNT"
 for f in adsp cdsp modem; do
-    sudo -n cp -f "$MNT"/image/$f.mdt           "$MIIMG/$f.mbn"
-    sudo -n cp -f "$MNT"/image/$f.mdt           "$MIIMG/$f.mdt" 2>/dev/null || true
+    $SUDO cp -f "$MNT"/image/$f.mdt           "$MIIMG/$f.mbn"
+    $SUDO cp -f "$MNT"/image/$f.mdt           "$MIIMG/$f.mdt" 2>/dev/null || true
     for seg in "$MNT"/image/$f.b[0-9][0-9]; do
         [ -f "$seg" ] || continue
-        sudo -n cp -f "$seg" "$MIIMG/"
+        $SUDO cp -f "$seg" "$MIIMG/"
     done
     for jsn in "$MNT"/image/"${f}r.jsn" "$MNT"/image/"${f}uw.jsn" "$MNT"/image/"${f}ua.jsn"; do
-        [ -f "$jsn" ] && sudo -n cp -f "$jsn" "$MIIMG/" || true
+        [ -f "$jsn" ] && $SUDO cp -f "$jsn" "$MIIMG/" || true
     done
 done
 for f in mba.mbn wlanmdsp.mbn bdwlan.bin; do
-    [ -f "$MNT/image/$f" ] && sudo -n cp -f "$MNT/image/$f" "$MIIMG/" || true
+    [ -f "$MNT/image/$f" ] && $SUDO cp -f "$MNT/image/$f" "$MIIMG/" || true
 done
-sudo -n umount "$MNT"
+$SUDO umount "$MNT"
 
 # -----------------------------------------------------------------------------
 say "unpacking vendor image"
-sudo -n mount -o loop,ro "$VENDOR" "$MNT"
+$SUDO mount -o loop,ro "$VENDOR" "$MNT"
 for f in a630_zap.elf a630_sqe.fw a630_gmu.bin tas2557_uCDSP.bin; do
-    p=$(sudo -n find "$MNT" -name "$f" -type f 2>/dev/null | head -1)
+    p=$($SUDO find "$MNT" -name "$f" -type f 2>/dev/null | head -1)
     [ -n "${p:-}" ] || { echo "  not found: $f"; continue; }
     case "$f" in
         a630_*)
-            sudo -n mkdir -p "$FW/qcom"
+            $SUDO mkdir -p "$FW/qcom"
             out="$FW/qcom/$f"
             [ "$f" = a630_zap.elf ] && out="$FW/qcom/a630_zap.mbn"
-            sudo -n cp -f "$p" "$out"
+            $SUDO cp -f "$p" "$out"
             echo "  $out"
             ;;
         *)
-            sudo -n cp -f "$p" "$FW/$f"
+            $SUDO cp -f "$p" "$FW/$f"
             echo "  $FW/$f"
             ;;
     esac
 done
-sudo -n umount "$MNT"
+$SUDO umount "$MNT"
 
 # -----------------------------------------------------------------------------
 say "staging what tqftpserv serves"
 # The modem asks for /readonly/vendor/firmware_mnt/image/<name>, which tqftpserv
 # maps onto /lib/firmware/. It also reads the remoteproc firmware-name from the
 # device tree, so the same files serve both entry points.
-sudo -n rm -rf "$FW/image"
-sudo -n mkdir -p "$FW/image"
+$SUDO rm -rf "$FW/image"
+$SUDO mkdir -p "$FW/image"
 for f in "$MIIMG"/*; do
     [ -f "$f" ] || continue
-    sudo -n cp -f "$f" "$FW/image/"
+    $SUDO cp -f "$f" "$FW/image/"
 done
-echo "  $(sudo -n ls -1 "$FW/image" | wc -l) files in $FW/image"
+echo "  $($SUDO ls -1 "$FW/image" | wc -l) files in $FW/image"
 
 # -----------------------------------------------------------------------------
 say "done"
