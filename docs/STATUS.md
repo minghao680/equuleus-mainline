@@ -362,6 +362,45 @@ An AMOLED panel has no separate backlight LED — brightness *is* a DCS command
 adjust. The corollary matters too: the panel is not emitting, so the power being
 drawn is the DSI/DPU controller, not the screen.
 
+
+## Release: built and published by CI
+
+Tagging `v*` runs the whole pipeline and publishes the artifacts:
+
+    https://github.com/minghao680/equuleus-mainline/releases/tag/v0.1.0
+
+    boot.img          64 MiB
+    rootfs.ext4.gz   162 MiB
+    FIRMWARE.txt
+
+The rootfs ships gzipped because the raw ext4 image is 4 GiB and GitHub rejects
+release assets of 2 GiB or more:
+
+    Validation Failed: {"resource":"ReleaseAsset","field":"size",
+                        "message":"size must be less than 2147483648"}
+
+Only about 240 MB of the image is in use, so gzip takes it to a fraction of the
+limit. Unzip before flashing.
+
+Both build jobs run against stock torvalds/linux v7.1-rc1, so the device tree is
+portable: everything it needs that vanilla lacks lives in kernel/tree-delta/ and
+is overlaid by scripts/apply-tree-delta.sh.
+
+## The modem is started by rmtfs, not by a separate unit
+
+`rmtfs -s` starts the modem service itself, so a second unit doing the same thing
+would race with it. `modem-start.service` is kept in the tree for reference but
+is deliberately not enabled; only `rmtfs.service` is in
+`multi-user.target.wants/`.
+
+The packaged unit is used unmodified:
+
+    ExecStart=/usr/bin/rmtfs -r -P -s
+
+`-r` keeps it read-only so nothing is written back to the EFS partitions, and
+`-P` serves the persist partition. A verbose drop-in was used during bring-up and
+has been removed.
+
 ## Next steps
 
 1. **Grow the root filesystem.** The image is 4 GB inside a 113 GB partition;
