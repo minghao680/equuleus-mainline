@@ -148,6 +148,36 @@ $SUDO mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
 $SUDO ln -sf /usr/lib/systemd/system/bluetooth.service \
     "$ROOT/etc/systemd/system/multi-user.target.wants/bluetooth.service"
 
+# NetworkManager provides nmtui, which is the only practical way to configure WiFi
+# on a device with a dead panel. It replaces systemd-networkd, and the two must not
+# both manage wlan0.
+$SUDO ln -sf /usr/lib/systemd/system/NetworkManager.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+$SUDO ln -sf /usr/lib/systemd/system/NetworkManager-dispatcher.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/NetworkManager-dispatcher.service"
+# networkd would fight NM for wlan0.
+$SUDO rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" 2>/dev/null || true
+$SUDO rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/networking.service" 2>/dev/null || true
+
+# Keep the factory MAC: NM randomises scan addresses by default.
+$SUDO mkdir -p "$ROOT/etc/NetworkManager/conf.d"
+$SUDO tee "$ROOT/etc/NetworkManager/conf.d/10-managed.conf" >/dev/null <<'EOF'
+[main]
+plugins=keyfile
+
+[device]
+wifi.scan-rand-mac-address=no
+EOF
+
+# Docker needs containerd running first; the unit pulls it in but enable it
+# explicitly so a manual start works too.
+$SUDO ln -sf /usr/lib/systemd/system/containerd.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/containerd.service" 2>/dev/null || true
+$SUDO ln -sf /usr/lib/systemd/system/docker.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/docker.service" 2>/dev/null || true
+$SUDO ln -sf /usr/lib/systemd/system/docker.socket \
+    "$ROOT/etc/systemd/system/sockets.target.wants/docker.socket" 2>/dev/null || true
+
 # -----------------------------------------------------------------------------
 # The image is built as its own step so a caller can add firmware or daemons to
 # the rootfs and then produce the image once, rather than building it twice.

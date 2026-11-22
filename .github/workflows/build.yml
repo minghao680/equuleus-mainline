@@ -316,8 +316,10 @@ jobs:
               '*/images/modem.img' '*/images/vendor.img' '*/images/bluetooth.img' || \
             tar -tzf rom/stock.tgz | head -20
           mkdir -p rom/images
-          find rom -name 'modem.img' -o -name 'vendor.img' -o -name 'bluetooth.img' \
-            | while read -r f; do
+          # Parenthesise the -o chain: without it find's implicit -a binds tighter
+          # than -o and only the first name is matched.
+          find rom \( -name 'modem.img' -o -name 'vendor.img' -o -name 'bluetooth.img' \) \
+            -type f | while read -r f; do
                 echo "  found $f"
                 mv -f "$f" rom/images/
               done

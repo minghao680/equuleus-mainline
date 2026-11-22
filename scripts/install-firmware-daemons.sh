@@ -97,16 +97,36 @@ fetch_pkg trixie bluez
 say "installing NetworkManager and nmtui"
 fetch_pkg trixie network-manager
 
-# Docker needs containerd and runc, which the docker.io package depends on.
-# overlayfs was the only kernel feature missing and is now enabled.
-say "installing Docker"
-fetch_pkg trixie docker.io
+# Docker, NetworkManager and the Vulkan stack each pull in a dependency tree, and
+# fetch_pkg only extracts a single .deb without recording it - docker.io is a
+# metapackage whose /usr/bin/docker lives in docker-cli, so extracting it alone
+# produced an image with dockerd but no CLI. apt resolves the tree and records the
+# packages, which also makes dpkg -l work for later diagnosis.
+say "installing Docker, NetworkManager and Vulkan with apt"
+apt_install() {
+    $SUDO chroot "$ROOT" /bin/sh -c "
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get install -y -qq $* 2>&1 | tail -3
+    " || echo "  apt install failed: $*"
+}
 
-# Vulkan on Adreno 630: the loader, the Turnip driver and vulkaninfo.
-say "installing the Vulkan runtime"
-fetch_pkg trixie libvulkan1
-fetch_pkg trixie mesa-vulkan-drivers
-fetch_pkg trixie vulkan-tools
+# apt needs a working sources.list and a resolv.conf inside the rootfs.
+$SUDO mkdir -p "$ROOT/etc/apt/sources.list.d"
+$SUDO tee "$ROOT/etc/apt/sources.list.d/debian.list" >/dev/null <<EOF
+deb $MIRROR trixie main
+EOF
+$SUDO cp -f /etc/resolv.conf "$ROOT/etc/resolv.conf" 2>/dev/null || true
+$SUDO mount --bind /dev "$ROOT/dev" 2>/dev/null || true
+$SUDO mount -t proc proc "$ROOT/proc" 2>/dev/null || true
+$SUDO mount -t sysfs sys "$ROOT/sys" 2>/dev/null || true
+
+$SUDO chroot "$ROOT" /bin/sh -c 'apt-get update -qq 2>&1 | tail -2' || true
+
+apt_install docker.io containerd runc
+apt_install network-manager
+apt_install libvulkan1 mesa-vulkan-drivers vulkan-tools
+
+$SUDO umount "$ROOT/sys" "$ROOT/proc" "$ROOT/dev" 2>/dev/null || true
 
 say "installing WiFi userspace tools"
 fetch_pkg trixie iw
