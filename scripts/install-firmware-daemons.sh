@@ -112,7 +112,9 @@ fi
 
 # -----------------------------------------------------------------------------
 say "verifying tqftpserv knows the vendor paths"
-if strings -a "$ROOT/usr/bin/tqftpserv" | grep -q '/readonly/vendor/firmware_mnt/image/'; then
+# grep -a rather than strings: strings lives in binutils, which a rootfs-only
+# build host has no reason to have installed.
+if grep -aq '/readonly/vendor/firmware_mnt/image/' "$ROOT/usr/bin/tqftpserv"; then
     echo "  OK - tqftpserv accepts /readonly/vendor/firmware_mnt/image/"
 else
     die "tqftpserv does not know the vendor firmware path; WiFi will not come up"

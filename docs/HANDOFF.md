@@ -214,7 +214,25 @@ ath10k_snoc 18800000.wifi: snoc probe          ← probe 成功结束
 
 ---
 
-## 6. 重启到 fastboot（已验证可用）
+## 6. 重启到 fastboot（**不可靠，请手动按键**）
+
+**结论：不要依赖 `reboot bootloader`，手动按音量减 + 电源。**
+
+2026-11-22 早先的记录说这条路「已验证可用」，那个结论是错的，已更正。当时观察到一次
+`reboot bootloader` 之后进入 fastboot，但后续五次尝试全部只是普通重启。那一次真正的
+原因很可能是：同一时期刚刷入的新镜像启动失败，ABL 自己回落到 fastboot，与 PON 无关。
+
+机制上，`qcom-pon` 把重启理由写进 PM8998 的 `PON_SOFT_RB_SPARE` 寄存器，理论上 ABL
+会读取它。驱动绑定是正常的：
+
+```
+$ ls /sys/bus/platform/drivers/qcom-pon/
+c440000.spmi:pmic@0:pon@800
+```
+
+但写入之后 ABL 并没有按它切换模式，说明这个寄存器不是这颗 ABL 判断的依据，或者
+`reason_shift` 落在的位不对。要继续查的话，方向是确认 ABL 实际读取的位置（可能是
+IMEM 或 misc 分区，而不是 PMIC spare）。
 
 **在系统里执行 `reboot bootloader` 即可进入 fastboot，不需要手动按键。** 2026-11-22 在真机上验证通过：
 
