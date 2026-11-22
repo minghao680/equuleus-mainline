@@ -85,6 +85,29 @@ say "installing tqftpserv 1.3 (sid) and its dependencies"
 fetch_pkg sid tqftpserv
 fetch_pkg trixie libzstd1
 
+# bluez provides bluetoothd, bluetoothctl and btmgmt. Without it the controller
+# probes and hci0 appears, but nothing can drive it and bluetooth-addr.sh has no
+# btmgmt to set the address with. It is not pulled in by anything else here.
+say "installing bluez"
+fetch_pkg trixie bluez
+
+# NetworkManager provides nmtui and nmcli. systemd-networkd was the previous
+# default but has no interactive interface, and nmtui is how the network gets
+# configured on a device with no working display.
+say "installing NetworkManager and nmtui"
+fetch_pkg trixie network-manager
+
+# Docker needs containerd and runc, which the docker.io package depends on.
+# overlayfs was the only kernel feature missing and is now enabled.
+say "installing Docker"
+fetch_pkg trixie docker.io
+
+# Vulkan on Adreno 630: the loader, the Turnip driver and vulkaninfo.
+say "installing the Vulkan runtime"
+fetch_pkg trixie libvulkan1
+fetch_pkg trixie mesa-vulkan-drivers
+fetch_pkg trixie vulkan-tools
+
 say "installing WiFi userspace tools"
 fetch_pkg trixie iw
 fetch_pkg trixie wpasupplicant

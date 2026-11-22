@@ -110,6 +110,30 @@ done
 $SUDO umount "$MNT"
 
 # -----------------------------------------------------------------------------
+# The Bluetooth patch and NVM are not in vendor.img; they have their own partition.
+# The controller asks the host for qca/crbtfw21.tlv at 0.75 s, before the root
+# filesystem exists, so these must also go into the initramfs - build-initramfs.sh
+# copies them from the same directory when GPU_FW_DIR points here.
+BTIMG=$ROM_DIR/bluetooth.img
+if [ -f "$BTIMG" ]; then
+    say "unpacking bluetooth.img"
+    $SUDO mount -o loop,ro "$BTIMG" "$MNT"
+    $SUDO mkdir -p "$FW/qca"
+    n=0
+    for f in crbtfw21.tlv crnv21.bin crbtfw20.tlv crnv20.bin crbtfw11.tlv crnv11.bin; do
+        p=$(find "$MNT" -name "$f" -type f 2>/dev/null | head -1)
+        [ -n "${p:-}" ] || continue
+        $SUDO cp -f "$p" "$FW/qca/$f"
+        echo "  $FW/qca/$f"
+        n=$((n + 1))
+    done
+    $SUDO umount "$MNT"
+    [ "$n" -gt 0 ] || echo "  warning: no Bluetooth firmware found in $BTIMG"
+else
+    echo "  note: $BTIMG not present, skipping Bluetooth firmware"
+fi
+
+# -----------------------------------------------------------------------------
 say "staging what tqftpserv serves"
 # The modem asks for /readonly/vendor/firmware_mnt/image/<name>, which tqftpserv
 # maps onto /lib/firmware/. It also reads the remoteproc firmware-name from the

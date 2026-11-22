@@ -313,13 +313,14 @@ jobs:
           # The archive nests everything under a directory named after the ROM,
           # so match the two files by pattern instead of assuming a prefix.
           tar -xzf rom/stock.tgz -C rom --wildcards \
-              '*/images/modem.img' '*/images/vendor.img' || \
+              '*/images/modem.img' '*/images/vendor.img' '*/images/bluetooth.img' || \
             tar -tzf rom/stock.tgz | head -20
           mkdir -p rom/images
-          find rom -name 'modem.img' -o -name 'vendor.img' | while read -r f; do
-            echo "  found $f"
-            mv -f "$f" rom/images/
-          done
+          find rom -name 'modem.img' -o -name 'vendor.img' -o -name 'bluetooth.img' \
+            | while read -r f; do
+                echo "  found $f"
+                mv -f "$f" rom/images/
+              done
           ls -l rom/images/
 
       - name: Install proprietary firmware into the rootfs

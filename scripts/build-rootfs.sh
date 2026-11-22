@@ -128,6 +128,26 @@ $SUDO install -m 644 "$REPO/systemd/wifi-mac.service" \
 $SUDO ln -sf /etc/systemd/system/wifi-mac.service \
     "$ROOT/etc/systemd/system/multi-user.target.wants/wifi-mac.service"
 
+# The WCN3990 comes up as 00:00:00:00:00:00 and stays DOWN, so bluetoothctl reports
+# "No default controller available". The factory address is six raw bytes on the
+# persist partition, at /persist/wlan_bt/bt.mac - not wlan.mac, which differs in one
+# nibble. Read at runtime so nothing device-specific is stored here.
+#
+# Ordered before bluetooth.service because the address has to be set while the
+# controller is still down.
+$SUDO install -m 755 "$REPO/systemd/bluetooth-addr.sh" \
+    "$ROOT/usr/local/sbin/bluetooth-addr.sh"
+$SUDO install -m 644 "$REPO/systemd/bluetooth-addr.service" \
+    "$ROOT/etc/systemd/system/bluetooth-addr.service"
+$SUDO ln -sf /etc/systemd/system/bluetooth-addr.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/bluetooth-addr.service"
+
+# bluetoothd itself is installed by install-firmware-daemons.sh (the bluez package);
+# enable its unit here so the controller is brought up at boot.
+$SUDO mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
+$SUDO ln -sf /usr/lib/systemd/system/bluetooth.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/bluetooth.service"
+
 # -----------------------------------------------------------------------------
 # The image is built as its own step so a caller can add firmware or daemons to
 # the rootfs and then produce the image once, rather than building it twice.
