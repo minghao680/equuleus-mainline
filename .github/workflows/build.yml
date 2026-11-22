@@ -298,11 +298,12 @@ jobs:
           It is fetched from Xiaomi's own CDN during the build rather than stored
           in this repository. The device is end-of-life, so that image is final.
 
-          boot.img contains no proprietary firmware. The GPU's a630_sqe.fw is
-          therefore missing at boot because msm loads it before the root
-          filesystem is mounted; the display still works, GPU acceleration does
-          not. Build the boot image locally with the firmware present, or add it
-          to the initramfs, if you need the GPU.
+          boot.img also carries the firmware that has to be present before the
+          root filesystem is mounted: the GPU blobs (a630_sqe.fw from
+          linux-firmware, plus a630_gmu.bin and a630_zap.mdt from the stock ROM),
+          the speaker amplifier's tas2557_uCDSP.bin, and the Bluetooth patch and
+          NVM under qca/. Without those, msm, tas2557 and the QCA controller all
+          probe before the root filesystem exists and fail to load anything.
 
           To refresh the firmware by hand:
 
