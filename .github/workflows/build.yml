@@ -313,7 +313,7 @@ jobs:
         with:
           files: |
             dist/boot/boot.img
-            dist/rootfs/rootfs.ext4
+            dist/rootfs/rootfs.ext4.gz
             dist/FIRMWARE.txt
           body: |
             Build of `${{ github.sha }}` against kernel `${{ env.KERNEL_REF }}`.
@@ -321,6 +321,10 @@ jobs:
             | Artifact | Flash as |
             |---|---|
             | `boot.img` | `fastboot flash boot boot.img` |
-            | `rootfs.ext4` | `fastboot flash userdata rootfs.ext4` |
+            | `rootfs.ext4.gz` | `gunzip rootfs.ext4.gz`, then `fastboot flash userdata rootfs.ext4` |
+
+            The rootfs ships gzipped because the raw image is 4 GiB and GitHub
+            caps release assets at 2 GiB. It compresses about 7:1, to roughly
+            585 MiB.
 
             Neither file contains proprietary firmware. See `FIRMWARE.txt`.
