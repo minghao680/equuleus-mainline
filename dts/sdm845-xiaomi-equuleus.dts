@@ -13,6 +13,7 @@
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/sound/qcom,wcd934x.h>
+#include <dt-bindings/sound/qcom,q6voice.h>
 #include "sdm845.dtsi"
 /*
  * The WCD9340 codec on SLIMbus, shared by several sdm845 boards. It also
@@ -678,6 +679,53 @@
 &pmi8998_fg {
 	monitored-battery = <&battery>;
 	power-supplies = <&pmi8998_charger>;
+};
+
+/*
+ * Front-end DAIs for playback. The shared sdm845.dtsi only defines the
+ * containers; each board declares the ones it uses.
+ */
+&q6asmdai {
+	dai@0 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+	};
+
+	dai@1 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
+	};
+
+	dai@2 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
+	};
+
+	dai@3 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
+	};
+};
+
+&q6voicedai {
+	dai@1 {
+		reg = <VOICEMMODE1>;
+	};
+};
+
+/*
+ * Back-end ports. SLIMBUS_0 carries the WCD9340 (earpiece, headset, mics);
+ * QUATERNARY MI2S feeds the TAS2557 speaker amplifier.
+ */
+&q6afedai {
+	dai@2 {
+		reg = <SLIMBUS_0_RX>;
+	};
+
+	dai@3 {
+		reg = <SLIMBUS_0_TX>;
+	};
+
+	dai@22 {
+		reg = <QUATERNARY_MI2S_RX>;
+		qcom,sd-lines = <0>;
+	};
 };
 
 /*
