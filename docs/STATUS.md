@@ -188,6 +188,76 @@ tqftpserv, which are unrelated to WiFi.
 `scripts/install-firmware-daemons.sh` does all of the above, including pulling
 tqftpserv from sid rather than trixie.
 
+## Measured on hardware
+
+WiFi, with the factory MAC applied from persist:
+
+```
+Connected to 52:33:f0:9c:8d:66 (on wlan0)
+        SSID: (5 GHz AP)
+        freq: 5180.0
+        signal: -25 dBm
+        RX: 5592 bytes (47 packets)
+
+curl 13.2 MB in 1.61 s   -> 8.2 MB/s, about 66 Mbps
+ping gateway 10x         -> 0% loss, 16.0 ms avg
+ping 223.5.5.5 10x       -> 0% loss, 29.4 ms avg
+apt-get update           -> 16.1 MB in 3 s, then installed curl and iperf3
+```
+
+Battery, once `pmi8998.dtsi`'s charger and gauge are set to okay:
+
+```
+qcom-battery     capacity 1   status Charging  voltage 3.22 V  current -360 mA
+pmi8998-charger  status Charging  voltage 4.79 V  current  442 mA
+```
+
+CPU scaling, measured under load:
+
+```
+scaling_driver  qcom-cpufreq-hw      governor schedutil
+cpu0 idle 1.13 GHz -> load 1.77 GHz  (max 1.77 GHz)
+cpu4 idle 1.69 GHz -> load 2.65 GHz  (max 2.65 GHz)
+cpu7 idle 1.69 GHz -> load 2.65 GHz  (max 2.65 GHz)
+sha256 of 512 MiB single-threaded: 0.559 s
+```
+
+## The clock is a prerequisite, not a nicety
+
+`apt-get update` failed with
+
+```
+Not live until 2026-11-21T08:46:20Z
+W: OpenPGP signature verification failed
+E: The repository is not signed.
+```
+
+because the RTC sits at April 2026 - seven months behind - so Debian's signature
+check rejects a valid certificate as not yet in effect. Setting the time once
+fixes it instantly, and the same update then succeeds. systemd-timesyncd is
+installed and enabled, but it needs WiFi up first, which is a circular
+dependency on a fresh boot.
+
+## GPU: the stock firmware is too old for mainline
+
+The initramfs now carries the a630 blobs and they load:
+
+```
+msm_dpu: [drm:adreno_request_fw] loaded qcom/a630_sqe.fw from new location
+msm_dpu: [drm:adreno_request_fw] loaded qcom/a630_gmu.bin from new location
+```
+
+but then
+
+```
+adreno 5000000.gpu: [drm:a6xx_ucode_load] *ERROR* a630 SQE ucode is too old.
+Have version 187 need at least 190
+```
+
+The 2021 stock ROM ships SQE ucode version 187; mainline requires 190 or newer.
+That blob has to come from somewhere other than this device's firmware, so the
+GPU stays unaccelerated until then. Display works either way.
+
 ## Panel backlight: not controllable on a dead panel
 
 `/sys/class/backlight/ae94000.dsi.0/` exists and reports `max_brightness = 1023`,
