@@ -218,3 +218,29 @@ CI 已验证能正确应用并构建（run 45058328716，两个 job 都成功）
 
 所以请求值 `3200000` 完整到达第 6 层，`51200000` 完整到达第 7 层，
 新增的 `F(51200000, ...)` 行会被精确命中。
+
+### 为什么 -2.34% 的误差会毁掉整条链路
+
+完整因果链，每一环都能在代码里对上：
+
+```
+控制器收到 0xFC48，切到 3,200,000 baud
+主机切到 3,125,000 baud                    ← 时钟表缺 51.2 MHz
+控制器在 3.2 M 下发出 vendor event
+主机在 3.125 M 下采样                       ← 速率不一致
+HCI_EV_VENDOR (0xFF) 被解码成错误的值
+hdr->evt != HCI_EV_VENDOR
+complete(&qca->drop_ev_comp) 永不执行
+wait_for_completion_timeout(100ms) 超时
+  → "Failed to change controller baudrate"
+之后所有字节继续错位
+  → hci_recv_frame() 返回 -EILSEQ
+  → "Frame reassembly failed (-84)"
+```
+
+**关键点**：`HCI_EV_VENDOR` 就是单字节 `0xFF`（`include/net/bluetooth/hci.h:3303`）。
+在 2.34% 的速率误差下，连续字节流的采样相位会持续漂移，这个字节被采错
+只是时间问题——这正好解释了为什么现象是「有时能识别控制器版本，有时直接报错」。
+
+修复后两边都是 3,200,000 baud，`0xFF` 正确解码，`drop_ev_comp` 正常完成，
+整条链路贯通。
