@@ -25,6 +25,9 @@ env:
   DTS_NAME: sdm845-xiaomi-equuleus
   # The boot partition on this device.
   BOOT_PART_SIZE: 67108864
+  # Final stock fastboot ROM for this EOL device. Verified reachable.
+  ROM_VERSION: V12.5.2.0.QECCNXM
+  ROM_FILE: equuleus_images_V12.5.2.0.QECCNXM_20211118.0000.00_10.0_cn_4ce136c735.tgz
 
 jobs:
   boot:
@@ -141,6 +144,37 @@ jobs:
           # rmtfs, pd-mapper, tqftpserv 1.3 (from sid) and the libnl runtime iw
           # needs. Without these there is no WiFi even with perfect firmware.
           ROOT="$PWD/out-rootfs" scripts/install-firmware-daemons.sh
+
+      - name: Prepare ROM directory
+        run: mkdir -p rom
+
+      - uses: actions/cache@v4
+        id: rom-cache
+        with:
+          path: rom/images
+          key: stock-rom-${{ env.ROM_VERSION }}
+
+      - name: Extract firmware from the stock ROM
+        if: steps.rom-cache.outputs.cache-hit != 'true'
+        run: |
+          # Official Xiaomi CDN. Verified reachable: 3051 MB,
+          # application/x-gtar-compressed. Mirrors exist at bn./cdnorg./bigota.
+          curl -fL --retry 3 --max-time 1800 -o rom/stock.tgz \
+            "https://cdnorg.d.miui.com/$ROM_VERSION/$ROM_FILE"
+          mkdir -p rom/images
+          # modem.img holds WiFi/BT/ADSP firmware, vendor.img holds the signed
+          # zap shader and the speaker amp firmware.
+          tar -xzf rom/stock.tgz -C rom/images --strip-components=1 \
+              images/modem.img images/vendor.img
+
+      - name: Install proprietary firmware into the rootfs
+        run: |
+          # Cannot be redistributed with the source, but it is reproducible: it
+          # comes from Xiaomi's own server, which is why the build does this.
+          ROM_DIR="$PWD/rom/images" ROOT="$PWD/out-rootfs" scripts/prepare-firmware.sh
+
+      - name: Build the image
+        run: |
           ROOT="$PWD/out-rootfs" OUT="$PWD/out" scripts/make-rootfs-image.sh
           ls -lh out/rootfs.ext4
 
@@ -164,17 +198,24 @@ jobs:
       - name: Note about firmware
         run: |
           cat > dist/FIRMWARE.txt <<'EOF'
-          These images deliberately contain no proprietary Qualcomm firmware.
+          This rootfs includes proprietary Qualcomm firmware extracted from the
+          stock fastboot ROM for this device:
 
-          After flashing, extract what this device needs from a stock fastboot ROM
-          you own:
+              V12.5.2.0.QECCNXM / cdnorg.d.miui.com
+
+          It is fetched from Xiaomi's own CDN during the build rather than stored
+          in this repository. The device is end-of-life, so that image is final.
+
+          boot.img contains no proprietary firmware. The GPU's a630_sqe.fw is
+          therefore missing at boot because msm loads it before the root
+          filesystem is mounted; the display still works, GPU acceleration does
+          not. Build the boot image locally with the firmware present, or add it
+          to the initramfs, if you need the GPU.
+
+          To refresh the firmware by hand:
 
               ROM_DIR=/path/to/stock-rom ROOT=out-rootfs scripts/prepare-firmware.sh
-
-          then rebuild and re-flash rootfs.ext4. Without it the modem does not
-          start, so there is no WiFi, no Bluetooth and no audio.
           EOF
-
       - uses: softprops/action-gh-release@v2
         with:
           files: |
