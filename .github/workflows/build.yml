@@ -113,6 +113,22 @@ jobs:
                KALLSYMS_EXTRA_PASS=1 -j"$(nproc)" \
                Image.gz "qcom/$DTS_NAME.dtb"
 
+      - name: Fetch GPU firmware from the stock ROM
+        run: |
+          # msm is built in and loads this during probe, before the root
+          # filesystem exists, so it has to be inside the initramfs.
+          mkdir -p rom gpu-fw
+          curl -fL --retry 3 --max-time 1800 -o rom/stock.tgz \
+            "https://cdnorg.d.miui.com/$ROM_VERSION/$ROM_FILE"
+          tar -xzf rom/stock.tgz -C rom --strip-components=1 images/vendor.img
+          sudo mkdir -p /mnt/vendor
+          sudo mount -o loop,ro rom/images/vendor.img /mnt/vendor
+          sudo cp /mnt/vendor/firmware/a630_sqe.fw gpu-fw/ 2>/dev/null || true
+          sudo cp /mnt/vendor/firmware/a630_gmu.bin gpu-fw/ 2>/dev/null || true
+          sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mbn 2>/dev/null || true
+          sudo umount /mnt/vendor
+          ls -l gpu-fw/
+
       - name: Build initramfs
         run: |
           # A static aarch64 busybox comes out of the Debian arm64 package.
@@ -123,7 +139,7 @@ jobs:
                | awk '/^Package: busybox-static$/{f=1} f&&/^Filename:/{print $2; exit}')
           curl -s --max-time 300 -o /tmp/busybox.deb "http://deb.debian.org/debian/$FN"
           mkdir -p /tmp/bb && dpkg-deb -x /tmp/busybox.deb /tmp/bb
-          BUSYBOX=/tmp/bb/usr/bin/busybox scripts/build-initramfs.sh
+          GPU_FW_DIR="$PWD/gpu-fw" BUSYBOX=/tmp/bb/usr/bin/busybox scripts/build-initramfs.sh
 
       - name: Pack boot image
         run: |

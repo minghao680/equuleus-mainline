@@ -84,6 +84,28 @@ ln -sf /bin/busybox "$WORK/sbin/reboot"
 
 install -m 755 "$REPO/initramfs/init" "$WORK/init"
 
+# -----------------------------------------------------------------------------
+# Firmware that has to be reachable before the root filesystem is mounted.
+#
+# msm is built in and loads the GPU firmware during probe, which happens while
+# the initramfs is still the root. Without a630_sqe.fw here the GPU never comes
+# up and the kernel logs "Direct firmware load for qcom/a630_sqe.fw failed".
+# The file is proprietary, so it is only included when the caller points at it.
+if [ -n "${GPU_FW_DIR:-}" ] && [ -d "$GPU_FW_DIR" ]; then
+    say "adding GPU firmware to the initramfs"
+    mkdir -p "$WORK/lib/firmware/qcom"
+    n=0
+    for f in a630_sqe.fw a630_gmu.bin a630_zap.mbn; do
+        [ -f "$GPU_FW_DIR/$f" ] || continue
+        cp -f "$GPU_FW_DIR/$f" "$WORK/lib/firmware/qcom/$f"
+        echo "  qcom/$f"
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] || echo "  none of the a630 files found in $GPU_FW_DIR"
+else
+    echo "  GPU_FW_DIR not set - the GPU will not initialise at boot"
+fi
+
 cat > "$WORK/etc/profile" <<'EOF'
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
