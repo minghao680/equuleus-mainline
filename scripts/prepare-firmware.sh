@@ -77,7 +77,13 @@ for f in a630_zap.elf a630_sqe.fw a630_gmu.bin tas2557_uCDSP.bin; do
         a630_*)
             $SUDO mkdir -p "$FW/qcom"
             out="$FW/qcom/$f"
-            [ "$f" = a630_zap.elf ] && out="$FW/qcom/a630_zap.mbn"
+            if [ "$f" = a630_zap.elf ]; then
+                # Different kernel versions look for different names.
+                $SUDO cp -f "$p" "$FW/qcom/a630_zap.mbn"
+                $SUDO cp -f "$p" "$FW/qcom/a630_zap.mdt"
+                echo "  $FW/qcom/a630_zap.{mbn,mdt}"
+                continue
+            fi
             $SUDO cp -f "$p" "$out"
             echo "  $out"
             ;;

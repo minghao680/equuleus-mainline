@@ -36,6 +36,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check script permissions
+        run: scripts/check-modes.sh
+
       - name: Install build dependencies
         run: |
           sudo apt-get update

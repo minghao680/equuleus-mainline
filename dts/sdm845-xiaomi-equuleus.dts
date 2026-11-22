@@ -623,6 +623,7 @@
 	/* Loudspeaker goes through the amplifier over QUATERNARY MI2S. */
 	spkr-dai-link {
 		link-name = "Primary Spkr Playback";
+
 		cpu {
 			sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
 		};
@@ -722,6 +723,24 @@
 		reg = <QUATERNARY_MI2S_RX>;
 		qcom,sd-lines = <0>;
 	};
+};
+
+/*
+ * QUP wrapper 0 carries uart6, which is where the WCN3990 Bluetooth controller
+ * sits. Without this the serial@898000 platform device is never created, so
+ * there is no ttyHS and no HCI device.
+ */
+&qupv3_id_0 {
+	status = "okay";
+};
+
+/*
+ * i2c5 drives the TAS2557 speaker amplifier and its dmas property references
+ * gpi_dma0, which sdm845.dtsi leaves disabled. Without this the I2C controller
+ * cannot acquire its DMA channels and the amplifier never appears.
+ */
+&gpi_dma0 {
+	status = "okay";
 };
 
 /*

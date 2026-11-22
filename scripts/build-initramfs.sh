@@ -95,11 +95,23 @@ if [ -n "${GPU_FW_DIR:-}" ] && [ -d "$GPU_FW_DIR" ]; then
     say "adding GPU firmware to the initramfs"
     mkdir -p "$WORK/lib/firmware/qcom"
     n=0
-    for f in a630_sqe.fw a630_gmu.bin a630_zap.mbn; do
+    # The driver asks for a630_zap.mdt; the vendor file is a630_zap.elf. Ship it
+    # under both names because different kernel versions look for different ones.
+    for f in a630_sqe.fw a630_gmu.bin a630_zap.mbn a630_zap.mdt; do
         [ -f "$GPU_FW_DIR/$f" ] || continue
         cp -f "$GPU_FW_DIR/$f" "$WORK/lib/firmware/qcom/$f"
         echo "  qcom/$f"
         n=$((n + 1))
+    done
+    # The speaker amplifier also loads its firmware during probe, at about
+    # 0.58 s, long before the root filesystem exists. Look in the same
+    # directory and one level up, since callers point GPU_FW_DIR at either.
+    for cand in "$GPU_FW_DIR/tas2557_uCDSP.bin" "$GPU_FW_DIR/../tas2557_uCDSP.bin"; do
+        [ -f "$cand" ] || continue
+        cp -f "$cand" "$WORK/lib/firmware/tas2557_uCDSP.bin"
+        echo "  tas2557_uCDSP.bin"
+        n=$((n + 1))
+        break
     done
     [ "$n" -gt 0 ] || echo "  none of the a630 files found in $GPU_FW_DIR"
 else
