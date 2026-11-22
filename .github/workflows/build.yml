@@ -103,7 +103,7 @@ jobs:
                | awk '/^Package: busybox-static$/{f=1} f&&/^Filename:/{print $2; exit}')
           curl -s --max-time 300 -o /tmp/busybox.deb "http://deb.debian.org/debian/$FN"
           mkdir -p /tmp/bb && dpkg-deb -x /tmp/busybox.deb /tmp/bb
-          BUSYBOX=/tmp/bb/bin/busybox scripts/build-initramfs.sh
+          BUSYBOX=/tmp/bb/usr/bin/busybox scripts/build-initramfs.sh
 
       - name: Pack boot image
         run: |
@@ -132,6 +132,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             mmdebstrap arch-test qemu-user-static \
             e2fsprogs util-linux dpkg-dev curl
+
+      - name: Use Debian trixie archive keys
+        run: |
+          # The runner is Ubuntu, whose debian-archive-keyring predates trixie,
+          # so mmdebstrap rejects the Release file as unsigned. Install the
+          # matching keyring from the suite we are actually bootstrapping.
+          curl -s --max-time 150 \
+            http://deb.debian.org/debian/dists/trixie/main/binary-all/Packages.gz \
+            -o /tmp/Packages-all.gz
+          FN=$(gzip -dc /tmp/Packages-all.gz \
+            | awk '/^Package: debian-archive-keyring$/{f=1} f&&/^Filename:/{print $2; exit}')
+          echo "  keyring package: $FN"
+          curl -s --max-time 300 -o /tmp/keyring.deb "http://deb.debian.org/debian/$FN"
+          sudo dpkg -i /tmp/keyring.deb
 
       - name: Build rootfs
         run: |
