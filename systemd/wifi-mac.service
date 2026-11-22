@@ -1,0 +1,17 @@
+[Unit]
+Description=Apply the factory WiFi MAC address
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
+# ath10k only gets a permanent address from the device tree or the QMI firmware;
+# on this board neither provides one, so it picks a random address. The factory
+# value is on the persist partition, which is device-local, so nothing personal
+# ends up in the repository.
+After=multi-user.target
+ConditionPathExists=/dev/disk/by-partlabel/persist
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/wifi-mac.sh
+
+[Install]
+WantedBy=multi-user.target

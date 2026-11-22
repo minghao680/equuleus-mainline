@@ -105,15 +105,23 @@ sudo -n mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
 sudo -n ln -sf /etc/systemd/system/adsp-start.service \
     "$ROOT/etc/systemd/system/multi-user.target.wants/adsp-start.service"
 
-# The modem needs the same treatment, and it matters even more: the WCN3990
-# Wi-Fi firmware runs on the modem, and qcom_q6v5_mss has auto_boot = false, so
-# without this the WLFW QMI service never appears and ath10k waits forever.
-sudo -n install -m 755 "$REPO/systemd/start-modem.sh" \
-    "$ROOT/usr/local/sbin/start-modem.sh"
+# The modem needs starting too: the WCN3990 Wi-Fi firmware runs on it and
+# qcom_q6v5_mss has auto_boot = false. That start is done by `rmtfs -s` - rmtfs
+# spawns the modem once it is ready to serve file requests - so there is
+# deliberately no separate modem-start unit here. Two starters would race, and
+# the ordering that matters (rmtfs ready before the modem boots) only holds if
+# rmtfs is the one doing it.
 sudo -n install -m 644 "$REPO/systemd/modem-start.service" \
-    "$ROOT/etc/systemd/system/modem-start.service"
-sudo -n ln -sf /etc/systemd/system/modem-start.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/modem-start.service"
+    "$ROOT/etc/systemd/system/modem-start.service.disabled" 2>/dev/null || true
+
+# ath10k falls back to a random MAC unless the device tree or firmware supplies
+# one. The factory address lives on the persist partition; this unit reads it at
+# boot so no device-specific value is ever stored in the repository.
+sudo -n install -m 755 "$REPO/systemd/wifi-mac.sh" "$ROOT/usr/local/sbin/wifi-mac.sh"
+sudo -n install -m 644 "$REPO/systemd/wifi-mac.service" \
+    "$ROOT/etc/systemd/system/wifi-mac.service"
+sudo -n ln -sf /etc/systemd/system/wifi-mac.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/wifi-mac.service"
 
 # -----------------------------------------------------------------------------
 say "creating the ext4 image"
