@@ -124,15 +124,11 @@ sudo -n ln -sf /etc/systemd/system/wifi-mac.service \
     "$ROOT/etc/systemd/system/multi-user.target.wants/wifi-mac.service"
 
 # -----------------------------------------------------------------------------
+# The image is built as its own step so a caller can add firmware or daemons to
+# the rootfs and then produce the image once, rather than building it twice.
 say "creating the ext4 image"
-rm -f "$IMG"
-truncate -s "${SIZE_MB}M" "$IMG"
-sudo -n mke2fs -t ext4 -F -m 1 -L rootfs -U "$UUID" -d "$ROOT" "$IMG" >/dev/null
-
-echo "  image : $IMG"
-echo "  size  : $(stat -c%s "$IMG") bytes"
-echo "  uuid  : $UUID"
-sudo -n tune2fs -l "$IMG" 2>/dev/null | grep -E 'Filesystem UUID|Block count'
+ROOT="$ROOT" OUT="$OUT" IMG="$IMG" SIZE_MB="$SIZE_MB" \
+    "$REPO/scripts/make-rootfs-image.sh"
 
 say "done"
 echo "  flash with:"

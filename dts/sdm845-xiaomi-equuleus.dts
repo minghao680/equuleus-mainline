@@ -497,8 +497,20 @@
 	status = "okay";
 };
 
+/*
+ * Adreno 630.
+ *
+ * The zap shader is signed by Xiaomi and is not redistributable: it has to be
+ * pulled out of the vendor image of a stock fastboot ROM and installed as
+ * qcom/a630_zap.mbn. msm is built in and loads the firmware before the root
+ * filesystem is mounted, so the file has to be reachable from the initramfs.
+ */
 &gpu {
-	status = "disabled";
+	status = "okay";
+};
+
+&gpucc {
+	status = "okay";
 };
 
 /* Modem/wifi*/
