@@ -1,0 +1,11 @@
+This project is licensed under the GNU General Public License, version 2.
+
+The device tree and the packaging bits are derived from work by the sdm845
+mainline community and are distributed under the same terms as the Linux
+kernel they are built against.
+
+The full text of GPL-2.0 is available at:
+
+    https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+SPDX-License-Identifier: GPL-2.0-only

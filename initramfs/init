@@ -1,0 +1,93 @@
+#!/bin/sh
+# =============================================================================
+# equuleus mainline initramfs
+#
+# Mounts the minimum set of filesystems, brings up a USB CDC-ACM gadget so the
+# host gets a serial console, and hands the shell to it.
+#
+# The configfs mount below is NOT optional. /sys/kernel/config is only a
+# mountpoint; without mounting configfs on it, creating the gadget directory
+# silently fails inside sysfs and the host never sees a USB device, even when
+# DWC3, the PHY and the UDC have all probed correctly.
+# =============================================================================
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export HOME=/
+
+report() {
+	echo "[init] $*"
+}
+
+fail() {
+	echo "[init] FATAL: $*"
+	echo "[init] dropping to shell on the kernel console"
+	exec /bin/sh
+}
+
+# --- 1. mount the minimum ----------------------------------------------------
+mount -t proc     proc     /proc            2>/dev/null
+mount -t sysfs    sysfs    /sys             2>/dev/null
+mount -t devtmpfs devtmpfs /dev             2>/dev/null || mdev -s 2>/dev/null
+
+mount -t configfs configfs /sys/kernel/config || fail "cannot mount configfs"
+
+report "filesystems mounted"
+
+# --- 2. wait for the UDC -----------------------------------------------------
+i=0
+while [ "$i" -lt 100 ]; do
+	[ -n "$(ls -A /sys/class/udc 2>/dev/null)" ] && break
+	i=$((i + 1))
+	sleep 0.1
+done
+
+UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+[ -n "$UDC" ] || fail "no UDC - DWC3 did not probe (device tree or driver problem)"
+
+report "udc: $UDC"
+
+# --- 3. build the ACM gadget -------------------------------------------------
+G=/sys/kernel/config/usb_gadget/g1
+mkdir -p "$G" || fail "cannot create gadget directory"
+cd "$G" || fail "cannot enter $G"
+
+echo 0x1d6b > idVendor          # Linux Foundation
+echo 0x0104 > idProduct         # Multifunction Composite Gadget
+echo 0x0100 > bcdDevice
+echo 0x0200 > bcdUSB
+
+mkdir -p strings/0x409
+echo "equuleus-mainline"  > strings/0x409/serialnumber
+echo "equuleus-mainline"  > strings/0x409/manufacturer
+echo "equuleus console"   > strings/0x409/product
+
+mkdir -p configs/c.1
+mkdir -p configs/c.1/strings/0x409
+echo "CDC-ACM console"    > configs/c.1/strings/0x409/configuration
+echo 120                  > configs/c.1/MaxPower
+
+mkdir -p functions/acm.usb0
+ln -sf functions/acm.usb0 configs/c.1/ 2>/dev/null
+
+echo "$UDC" > UDC || fail "cannot bind gadget to UDC"
+
+i=0
+while [ "$i" -lt 50 ]; do
+	[ -e /dev/ttyGS0 ] && break
+	i=$((i + 1))
+	sleep 0.1
+done
+
+[ -e /dev/ttyGS0 ] || fail "bound but /dev/ttyGS0 did not appear"
+
+report "gadget bound, /dev/ttyGS0 ready"
+
+# --- 4. hand over the shell --------------------------------------------------
+echo
+echo "=============================================================="
+echo " mainline Linux on Xiaomi Mi 8 Pro (equuleus)"
+echo " kernel: $(uname -srm)"
+echo "=============================================================="
+echo
+
+exec /bin/sh -l </dev/ttyGS0 >/dev/ttyGS0 2>&1

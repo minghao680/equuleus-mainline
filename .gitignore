@@ -1,0 +1,23 @@
+# build output
+/out/
+
+# kernel trees, if someone clones one inside the repo
+/linux-sdm845/
+/linux-*/
+
+# boot images and other large binaries
+*.img
+*.bin
+*.zip
+*.raw
+*.apk
+*.gz
+*.xz
+*.bz2
+*.zst
+
+# editor / OS noise
+*~
+.DS_Store
+.vscode/
+.idea/

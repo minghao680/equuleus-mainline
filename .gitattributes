@@ -1,0 +1,9 @@
+# Keep shell scripts and the initramfs init LF-only: they run on the phone.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.dts  text eol=lf
+*.dtsi text eol=lf
+init   text eol=lf
+LICENSE text eol=lf
