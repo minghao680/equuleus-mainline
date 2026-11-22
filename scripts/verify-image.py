@@ -84,7 +84,13 @@ def main():
         gz_ok = False
         print(f"         gzip decompression failed: {exc}")
 
-    fdt = kernel.find(FDT_MAGIC)
+    # Must look at gz_end specifically: the same four bytes can turn up by
+    # chance inside the compressed kernel, which would report a bogus delta.
+    if gz_end >= 0 and kernel[gz_end:gz_end + 4] == FDT_MAGIC:
+        fdt = gz_end
+    else:
+        fdt = kernel.find(FDT_MAGIC, gz_end if gz_end >= 0 else 0)
+
     check('kernel blob contains an FDT', fdt >= 0, f'offset {fdt}')
     if gz_ok and fdt >= 0:
         check('DTB starts where the gzip stream ends (delta == 0)',

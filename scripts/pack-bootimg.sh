@@ -62,7 +62,11 @@ do = zlib.decompressobj(16 + zlib.MAX_WBITS)
 do.decompress(d)
 gz_end = len(d) - len(do.unused_data)
 
-fdt = d.find(struct.pack('>I', 0xD00DFEED))
+# Look only at where the gzip stream actually ends. Searching from offset 0 can
+# match the very same four bytes by coincidence inside the compressed data,
+# which reports a negative delta and fails a perfectly good image.
+_FDT = struct.pack('>I', 0xD00DFEED)
+fdt = gz_end if d[gz_end:gz_end + 4] == _FDT else d.find(_FDT, gz_end)
 
 print(f"  kernel blob : {len(d)} bytes")
 print(f"  gzip ends at: {gz_end}")

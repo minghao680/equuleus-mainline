@@ -10,7 +10,15 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/spmi/spmi.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+#include <dt-bindings/sound/qcom,wcd934x.h>
 #include "sdm845.dtsi"
+/*
+ * The WCD9340 codec on SLIMbus, shared by several sdm845 boards. It also
+ * carries the interrupt pinctrl that the codec node references.
+ */
+#include "sdm845-wcd9340.dtsi"
 /*
  * Brings in the PM8998 SPMI PMIC. Its PON block is what makes
  * "reboot bootloader" work: qcom-pon writes the reboot reason into the PMIC
@@ -495,6 +503,132 @@
 
 &dispcc {
 	status = "okay";
+};
+
+
+/* ---------------------------------------------------------------------------
+ * Audio
+ * ------------------------------------------------------------------------- */
+
+&wcd9340 {
+	reset-gpios = <&tlmm 64 GPIO_ACTIVE_HIGH>;
+	vdd-buck-supply = <&vreg_s4a_1p8>;
+	vdd-buck-sido-supply = <&vreg_s4a_1p8>;
+	vdd-tx-supply = <&vreg_s4a_1p8>;
+	vdd-rx-supply = <&vreg_s4a_1p8>;
+	vdd-io-supply = <&vreg_s4a_1p8>;
+
+	qcom,micbias1-microvolt = <1800000>;
+	qcom,micbias2-microvolt = <2700000>;
+	qcom,micbias3-microvolt = <1800000>;
+	qcom,micbias4-microvolt = <1800000>;
+};
+
+/*
+ * Speaker amplifier. Address, reset GPIO and IRQ GPIO come from the downstream
+ * device tree for this board.
+ */
+&i2c5 {
+	status = "okay";
+
+	tas2557: speaker@4c {
+		compatible = "ti,tas2557";
+		reg = <0x4c>;
+		ti,cdc-reset-gpio = <&tlmm 76 GPIO_ACTIVE_HIGH>;
+		ti,irq-gpio = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+		ti,i2s-bits = <16>;
+		ti,bypass-tmax;
+	};
+};
+
+&sound {
+	compatible = "qcom,sdm845-sndcard";
+	model = "Xiaomi Mi 8 Pro";
+	status = "okay";
+
+	pinctrl-0 = <&quat_mi2s_active &quat_mi2s_sd0_active>;
+	pinctrl-names = "default";
+
+	audio-routing =
+		"RX_BIAS", "MCLK",
+		"AMIC1", "MIC BIAS1",
+		"AMIC2", "MIC BIAS2",
+		"AMIC3", "MIC BIAS3";
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	mm2-dai-link {
+		link-name = "MultiMedia2";
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+		};
+	};
+
+	mm3-dai-link {
+		link-name = "MultiMedia3";
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+		};
+	};
+
+	mm4-dai-link {
+		link-name = "MultiMedia4";
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA4>;
+		};
+	};
+
+	/* Earpiece and wired headset hang off the codec. */
+	slim-dai-link {
+		link-name = "SLIM Playback";
+		cpu {
+			sound-dai = <&q6afedai SLIMBUS_0_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&wcd9340 AIF1_PB>;
+		};
+	};
+
+	slimcap-dai-link {
+		link-name = "SLIM Capture";
+		cpu {
+			sound-dai = <&q6afedai SLIMBUS_0_TX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&wcd9340 AIF1_CAP>;
+		};
+	};
+
+	/* Loudspeaker goes through the amplifier over QUATERNARY MI2S. */
+	spkr-dai-link {
+		link-name = "Primary Spkr Playback";
+		cpu {
+			sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&tas2557 0>;
+		};
+	};
 };
 
 /*
