@@ -13,7 +13,6 @@
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/sound/qcom,wcd934x.h>
-#include <dt-bindings/sound/qcom,q6voice.h>
 #include "sdm845.dtsi"
 /*
  * The WCD9340 codec on SLIMbus, shared by several sdm845 boards. It also
@@ -703,12 +702,6 @@
 
 	dai@3 {
 		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
-	};
-};
-
-&q6voicedai {
-	dai@1 {
-		reg = <VOICEMMODE1>;
 	};
 };
 
