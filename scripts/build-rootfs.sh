@@ -96,6 +96,15 @@ sudo -n chroot "$ROOT" systemctl enable systemd-networkd.service
 sudo -n chroot "$ROOT" systemctl set-default multi-user.target
 sudo -n umount "$ROOT/sys" "$ROOT/proc" "$ROOT/dev" 2>/dev/null || true
 
+# The ADSP firmware lives on this filesystem, but remoteproc is a built-in driver
+# and probes before the root is mounted, so it fails with -ENOENT. Start it once
+# more from userspace, where /lib/firmware is reachable.
+sudo -n install -m 644 "$REPO/systemd/adsp-start.service" \
+    "$ROOT/etc/systemd/system/adsp-start.service"
+sudo -n mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
+sudo -n ln -sf /etc/systemd/system/adsp-start.service \
+    "$ROOT/etc/systemd/system/multi-user.target.wants/adsp-start.service"
+
 # -----------------------------------------------------------------------------
 say "creating the ext4 image"
 rm -f "$IMG"

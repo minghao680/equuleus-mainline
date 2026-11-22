@@ -39,7 +39,9 @@ card0  renderD128
 | **systemd as PID 1** | **working** | `systemctl is-system-running` → `running`, no failed units |
 | Serial console login | **working** | `serial-getty@ttyGS0` with automatic root login |
 | Touch | not enabled | `stmfts` node exists, regulators untested |
-| WiFi / modem / DSPs | disabled in DT | not needed for headless bring-up |
+| ADSP | **working** | needs a post-boot `remoteproc start`; see below |
+| WiFi | **blocked** | driver binds, firmware never loaded; see below |
+| Panel backlight | **not controllable** | DSI PLL never locks, so no DCS commands get through |
 
 Verified from inside the system:
 
@@ -103,6 +105,84 @@ voting, which is what matters for stability. Whether the panel actually lights u
 cannot be confirmed on this unit: its AMOLED is physically broken. If you have a
 working panel, check the DSI PHY supply rails (`vdda-phy`, `vdda-pll`) against the
 downstream device tree.
+
+## ADSP: firmware must be reachable at probe time
+
+`remoteproc` is a built-in driver, so it probes while the initramfs is still the
+root filesystem — before `switch_root`. Firmware placed only in `/lib/firmware`
+on the real rootfs is therefore invisible to it:
+
+```
+remoteproc remoteproc1: Direct firmware load for qcom/sdm845/mi8/adsp.mbn failed with error -2
+```
+
+The firmware itself is fine (`adsp.mbn` plus `adsp.b00..b14`, extracted from the
+stock `modem` partition), and starting the remoteproc again once the rootfs is
+mounted works:
+
+```
+remoteproc remoteproc1: Booting fw image qcom/sdm845/mi8/adsp.mbn, size 7516
+remoteproc remoteproc1: remote processor adsp is now up
+```
+
+A one-shot systemd unit that writes `start` to
+`/sys/class/remoteproc/remoteproc1/state` makes this persistent. The cleaner
+alternative is to put the firmware into the initramfs, which is what
+distributions do for exactly this reason.
+
+## WiFi: the firmware is never loaded
+
+The drivers are now compiled in and `ath10k_snoc` binds:
+
+```
+ath10k_snoc 18800000.wifi: supply vdd-3.3-ch1 not found, using dummy regulator
+```
+
+and then nothing — no `wlan0`, no error, at any debug level.
+
+The reason is in the code: `ath10k` **never loads the WCN3990 firmware**. `qmi.c`
+registers for a QMI service and waits for a `WLFW_FW_READY_IND` indication; the
+only `qcom_mdt_load` call in the wireless tree is in `ath12k`. `snoc.c` decides
+between two worlds:
+
+```c
+node = of_get_child_by_name(host_dev->of_node, "wifi-firmware");
+if (!node) {
+        ar_snoc->use_tz = true;
+        return 0;
+}
+```
+
+With no `wifi-firmware` subnode the driver assumes **TrustZone already booted the
+firmware** — true when the stock bootloader boots Android, not when it boots our
+kernel. Neither the ADSP nor `pwrseq-qcom-wcn` (a power-sequencing driver for
+newer WCN PMUs, compatibles `qcom,wcn3950-pmu` / `qcom,wcn3988-pmu`) loads it.
+
+Fixing this needs a real firmware loader — the `qcom_mdt_load` +
+`qcom_scm_pas_auth_and_reset` sequence that `ath12k` performs, applied to
+WCN3990 — not a configuration change. The firmware blobs and the device tree node
+are already in place, so the remaining work is code.
+
+## Panel backlight: not controllable on a dead panel
+
+`/sys/class/backlight/ae94000.dsi.0/` exists and reports `max_brightness = 1023`,
+but every write fails:
+
+```
+# echo 50 > /sys/class/backlight/ae94000.dsi.0/brightness
+-bash: echo: write error: Connection timed out
+```
+
+because the DSI PLL never locks:
+
+```
+msm_dsi_phy ae94400.phy: [drm:dsi_pll_10nm_vco_prepare] *ERROR* DSI PLL(0) lock failed
+```
+
+An AMOLED panel has no separate backlight LED — brightness *is* a DCS command
+(0x51) over the same DSI link, so when the link is down there is nothing to
+adjust. The corollary matters too: the panel is not emitting, so the power being
+drawn is the DSI/DPU controller, not the screen.
 
 ## Next steps
 

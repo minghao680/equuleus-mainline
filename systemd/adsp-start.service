@@ -1,0 +1,17 @@
+[Unit]
+Description=Start the ADSP remoteproc
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
+# remoteproc is a built-in driver and probes while the initramfs is still the
+# root, so it cannot find firmware that lives on the real root filesystem and
+# fails with -ENOENT. Once the root is mounted the load succeeds, so retry it
+# here.
+After=local-fs.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
+
+[Install]
+WantedBy=multi-user.target
