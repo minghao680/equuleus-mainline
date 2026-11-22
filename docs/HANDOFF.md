@@ -194,15 +194,31 @@ qmi_add_lookup(&qmi->qmi_hdl, WLFW_SERVICE_ID_V01, ...);   /* 然后就是等 */
 
 ---
 
-## 6. 重启到 fastboot（进行中）
+## 6. 重启到 fastboot（已验证可用）
 
-`reboot bootloader` 依赖 `qcom-pon` 把重启理由写进 PM8998 的 PON 寄存器，ABL 下一轮启动时读取。
+**在系统里执行 `reboot bootloader` 即可进入 fastboot，不需要手动按键。** 2026-11-22 在真机上验证通过：
 
-之前失效的原因：**主线 sdm845 设备树从不实例化 PM8998 的 SPMI 节点**，所以 `pon@800` 不存在，`qcom-pon` 绑定不到任何设备。
+```
+root@equuleus:~# reboot bootloader
+（约 4 秒后主机出现 Android Bootloader Interface）
+$ fastboot devices
+764e4f55	fastboot
+```
 
-修法：DTS 里 `#include "pm8998.dtsi"`（该文件不含 regulator，不会和 RPMh 冲突），`pon@800` 自带 `mode-bootloader = <0x2>`。
+原理：`qcom-pon` 把重启理由写进 PM8998 的 PON scratch 寄存器，ABL 下一轮启动时读取它决定进 fastboot 还是正常启动。
 
-若仍不生效，兜底方案是 `reboot` 后立刻按住音量减。
+之前失效的原因：**主线 sdm845 设备树从不实例化 PM8998 的 SPMI 节点**，`pon@800` 不存在，`qcom-pon` 绑定不到设备。修法是在 DTS 里 `#include "pm8998.dtsi"`——该文件不含 regulator（不会和 RPMh 冲突），`pon@800` 自带 `mode-bootloader = <0x02>`。
+
+验证驱动绑定的方法：
+
+```sh
+ls /sys/bus/platform/drivers/qcom-pon/
+# 应能看到 c440000.spmi:pmic@0:pon@800
+```
+
+注意：加了 PM8998 节点后**第一次**刷入时设备可能直接停在 fastboot、不启动。重发一次 `fastboot reboot` 就正常了（2026-11-22 观察到的现象，原因未查明，但不影响后续使用）。
+
+兜底方案：`reboot` 后立刻按住音量减。
 
 ---
 
