@@ -1,0 +1,23 @@
+[Unit]
+Description=Set the Bluetooth controller's factory address
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
+# The WCN3990 comes up as 00:00:00:00:00:00 and stays DOWN, so bluetoothctl
+# reports "No default controller available". The address is on the persist
+# partition as six raw bytes, and this unit reads it there rather than storing a
+# device-specific value in the repository.
+#
+# Must run before bluetooth.service tries to bring the controller up.
+After=local-fs.target
+Before=bluetooth.service
+DefaultDependencies=no
+ConditionPathExists=/dev/disk/by-partlabel/persist
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bluetooth-addr.sh
+# A missing or unreadable persist partition must not fail the boot.
+SuccessExitStatus=1
+
+[Install]
+WantedBy=multi-user.target
