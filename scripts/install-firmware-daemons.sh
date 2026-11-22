@@ -78,11 +78,17 @@ fetch_pkg trixie libnl-genl-3-200
 fetch_pkg trixie libnl-route-3-200
 fetch_pkg trixie rfkill
 
+# The PMIC RTC reports 1970 and the kernel fabricates a wall clock from it, so
+# nothing that depends on real time works until NTP has run once.
+say "installing time synchronisation"
+fetch_pkg trixie systemd-timesyncd
+fetch_pkg trixie util-linux-extra
+
 # -----------------------------------------------------------------------------
 say "enabling services"
 W="$ROOT/etc/systemd/system/multi-user.target.wants"
 sudo -n mkdir -p "$W"
-for u in rmtfs.service pd-mapper.service tqftpserv.service; do
+for u in rmtfs.service pd-mapper.service tqftpserv.service systemd-timesyncd.service; do
     sudo -n ln -sf "/usr/lib/systemd/system/$u" "$W/$u"
     echo "  enabled: $u"
 done
