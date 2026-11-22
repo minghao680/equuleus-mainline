@@ -112,6 +112,11 @@ mkdir -p "$OUT"
 
 if [ "$SKIP_INITRAMFS" -eq 0 ]; then
     say "building initramfs"
+    # GPU_FW_DIR is what puts a630_sqe.fw into the image. msm is built in and
+    # loads it during probe, before the root filesystem is mounted, so without
+    # this the GPU never comes up. Point it at wherever prepare-firmware.sh
+    # installed the files.
+    GPU_FW_DIR=${GPU_FW_DIR:-$HOME/rootfs-trixie-arm64/lib/firmware/qcom} \
     KERNEL_SRC=$KERNEL_SRC OUT=$OUT BUSYBOX=${BUSYBOX:-} \
         "$REPO/scripts/build-initramfs.sh"
     INITRD=$OUT/initramfs.cpio.gz
