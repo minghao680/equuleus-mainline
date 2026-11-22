@@ -126,6 +126,14 @@ rootfs 目录在 WSL 的 `/home/claude/rootfs-trixie-arm64`，镜像是 `G:\equu
 
 ## 5. WiFi —— 主要待解问题
 
+> **⚠️ 本节已被后续工作推翻，请以 `HANDOFF-wifi-progress.md` 为准。**
+>
+> 关键更正：WLAN 固件**跑在 modem（MPSS）上**，不是由 Linux 加载。ath10k 只是等 WLFW QMI 服务出现。
+> 所以「需要自己写加载器、找 PAS ID」是错的方向——`qcom_q6v5_mss` 的 `auto_boot = false` 才是原因。
+>
+> 后续进展：modem 已能启动并稳定运行，ath10k 已确认跟随 modem 状态，当前卡在 `rmtfs` 的分区名映射上。
+> 详见 **`HANDOFF-wifi-progress.md`**。
+
 ### 5.1 现象
 
 驱动全部就位后，`ath10k_snoc` **完整走完 probe**，然后就没了：
