@@ -82,4 +82,33 @@ if ! grep -q 'qcom_smbx' "$PS/Makefile" 2>/dev/null; then
     echo "  added qcom_smbx to Makefile"
 fi
 
+# The restart-reason driver is a new file rather than an overlay, so it needs a
+# Kconfig entry and a Makefile line to be built.
+say "wiring the IMEM restart-reason driver"
+SOCQ=$KERNEL_SRC/drivers/soc/qcom
+
+if [ -d "$SOCQ" ]; then
+    if ! grep -q 'QCOM_IMEM_RESTART_REASON' "$SOCQ/Kconfig" 2>/dev/null; then
+        cat >> "$SOCQ/Kconfig" <<'EOF'
+
+config QCOM_IMEM_RESTART_REASON
+	tristate "Qualcomm IMEM restart reason"
+	depends on ARCH_QCOM || COMPILE_TEST
+	select REGMAP
+	help
+	  Say Y to write the restart reason into IMEM, which some Qualcomm
+	  bootloaders read to decide whether to enter fastboot or recovery.
+	  Without it "reboot bootloader" is an ordinary reboot on boards whose
+	  ABL ignores the PMIC's PON_SOFT_RB_SPARE register.
+EOF
+        echo "  added QCOM_IMEM_RESTART_REASON to Kconfig"
+    fi
+
+    if ! grep -q 'qcom-imem-restart-reason' "$SOCQ/Makefile" 2>/dev/null; then
+        printf 'obj-$(CONFIG_QCOM_IMEM_RESTART_REASON)\t+= qcom-imem-restart-reason.o\n' \
+            >> "$SOCQ/Makefile"
+        echo "  added qcom-imem-restart-reason to Makefile"
+    fi
+fi
+
 say "done"

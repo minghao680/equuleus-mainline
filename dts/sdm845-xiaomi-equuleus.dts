@@ -971,3 +971,22 @@
 		bias-pull-down;
 	};
 };
+
+/*
+ * "reboot bootloader" is an ordinary reboot without this: the ABL reads a magic
+ * in IMEM rather than the PMIC register mainline's qcom-pon writes. The vendor
+ * kernel puts 0x77665500 at IMEM + 0x65c for fastboot, 0x77665502 for recovery.
+ */
+/*
+ * "reboot bootloader" is an ordinary reboot without this: the ABL reads a magic
+ * in IMEM rather than the PMIC register mainline's qcom-pon writes. The vendor
+ * kernel puts 0x77665500 at IMEM + 0x65c for fastboot, 0x77665502 for recovery.
+ *
+ * The parent sram@14680000 has no label upstream, so this is added as a child by
+ * path rather than through a phandle reference.
+ */
+&{/soc@0/sram@14680000} {
+	imem-restart-reason {
+		compatible = "qcom,imem-restart-reason";
+	};
+};
