@@ -258,6 +258,89 @@ The 2021 stock ROM ships SQE ucode version 187; mainline requires 190 or newer.
 That blob has to come from somewhere other than this device's firmware, so the
 GPU stays unaccelerated until then. Display works either way.
 
+
+## GPU acceleration works
+
+The Adreno 630 initialises with the freedreno driver, at full resolution:
+
+```
+$ eglinfo | grep "EGL driver name"
+EGL driver name: msm
+
+$ glmark2-es2-drm -b build
+    GL_VENDOR:      freedreno
+    GL_RENDERER:    FD630
+    GL_VERSION:     OpenGL ES 3.2 Mesa 25.0.7-2+deb13u1
+    Surface Size:   1080x2248 fullscreen
+    FPS: 1039 FrameTime: 0.963 ms
+    glmark2 Score: 1038
+```
+
+Full benchmark suite scores **780**, with per-scene results from 118 FPS (buffer
+map update) to 1076 FPS (bump normals). The heaviest scenes are terrain (72 FPS)
+and refract (58 FPS), both geometry-bound at 1080x2248.
+
+Three things were needed, none of them a kernel change:
+
+  1. `a630_sqe.fw` from linux-firmware, because the 2021 stock ROM ships ucode
+     version 0x187 and mainline requires 0x190. See docs/gpu-firmware.md.
+  2. `a630_zap.mdt`, not just `a630_zap.mbn`. The driver asks for the .mdt name.
+  3. All of it inside the initramfs, because msm is built in and loads the
+     firmware during probe, before the root filesystem exists.
+
+GPU frequency scaling also works:
+
+```
+$ cat /sys/class/devfreq/5000000.gpu/available_frequencies
+257000000 342000000 414000000 520000000 596000000 675000000 710000000
+$ cat /sys/class/devfreq/5000000.gpu/governor
+simple_ondemand
+```
+
+## Bluetooth
+
+`hci0` comes up and the controller is identified:
+
+```
+Bluetooth: hci0: QCA SOC Version  :0x40010214
+Bluetooth: hci0: QCA ROM Version  :0x00000201
+```
+
+The controller downloads its firmware from the host, so `qca/crbtfw21.tlv` and
+`qca/crnv21.bin` have to be present - they come from the stock bluetooth
+partition.
+
+Getting this far needed `&qupv3_id_0` enabled: uart6 sits under that QUP wrapper,
+and only the wrapper holding the console was enabled, so serial@898000 was never
+instantiated at all.
+
+## Audio
+
+The card registers and both codecs are present:
+
+```
+$ cat /proc/asound/cards
+ 0 [Pro            ]: sdm845 - Xiaomi Mi 8 Pro
+                      Xiaomi Mi 8 Pro
+
+$ cat /proc/asound/pcm
+00-00: MultiMedia1  playback 1 : capture 1
+00-01: MultiMedia2  playback 1 : capture 1
+00-02: MultiMedia3  playback 1 : capture 1
+00-03: MultiMedia4  playback 1 : capture 1
+
+tas2557 5-004c: PG2.1 Silicon found
+tas2557 5-004c: Firmware driver: 0x400
+```
+
+The root cause of the long-standing failure was one disabled node: `gpi_dma0` is
+`status = "disabled"` in sdm845.dtsi, so i2c5 could not acquire DMA channels, the
+TAS2557 was never instantiated, and the dangling `&tas2557` reference aborted the
+whole sound card - earpiece and headset included.
+
+The amplifier firmware loads at 0.56 s, before the root filesystem is mounted, so
+it has to be in the initramfs like the GPU blobs.
+
 ## Panel backlight: not controllable on a dead panel
 
 `/sys/class/backlight/ae94000.dsi.0/` exists and reports `max_brightness = 1023`,
