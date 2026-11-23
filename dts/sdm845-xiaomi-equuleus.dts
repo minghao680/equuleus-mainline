@@ -643,6 +643,19 @@
  * qupv3_se6_4uart for it; our console is uart9, a different instance.
  */
 &uart6 {
+	/*
+	 * The default group in sdm845.dtsi is TX/RX only. The WCN3990 needs RTS and CTS
+	 * as well: hci_qca calls hci_uart_set_flow_control(hu, true) before switching
+	 * the baud rate, so that the controller can hold the host off while it
+	 * reprograms itself. With the pins not muxed to the UART that is a no-op, the
+	 * acknowledgement is lost, and the switch fails:
+	 *
+	 *   Bluetooth: hci0: Frame reassembly failed (-84)
+	 *   Bluetooth: hci0: Failed to change controller baudrate
+	 *
+	 * beryllium and the working Mi 8 device tree both override this the same way.
+	 */
+	pinctrl-0 = <&qup_uart6_4pin>;
 	status = "okay";
 
 	bluetooth: bluetooth {

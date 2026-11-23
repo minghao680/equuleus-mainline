@@ -69,15 +69,14 @@ done
 hciconfig "$HCI" up 2>/dev/null || true
 
 if command -v btmgmt >/dev/null 2>&1; then
-    # A controller that cannot init will never accept an address; do not wait on it.
-    if timeout 15 btmgmt --index 0 info >/dev/null 2>&1; then
-        timeout 10 btmgmt --index 0 power off 2>/dev/null || true
-        timeout 10 btmgmt --index 0 public-addr "$addr" 2>&1 | tail -2 || true
-        hciconfig "$HCI" up 2>/dev/null || true
-    else
-        echo "[bt] $HCI did not respond to btmgmt; leaving the address alone"
-        exit 0
-    fi
+    # -i hci0 rather than --index 0: the working Mi 8 configuration uses the name,
+    # and --index 0 failed here with "Invalid Index" even though hci0 existed.
+    #
+    # Every call is bounded. btmgmt blocks indefinitely against a controller that
+    # cannot init, which left this unit stuck in "activating" on hardware.
+    timeout 5 btmgmt -i "$HCI" power off >/dev/null 2>&1 || true
+    timeout 5 btmgmt -i "$HCI" public-addr "$addr" >/dev/null 2>&1 || true
+    timeout 5 btmgmt -i "$HCI" power on >/dev/null 2>&1 || true
 else
     echo "[bt] btmgmt not available"
 fi
