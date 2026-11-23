@@ -1,23 +1,27 @@
 [Unit]
 Description=Set the Bluetooth controller's factory address
 Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
-# The WCN3990 comes up as 00:00:00:00:00:00 and stays DOWN, so bluetoothctl
-# reports "No default controller available". The address is on the persist
-# partition as six raw bytes, and this unit reads it there rather than storing a
-# device-specific value in the repository.
+# The WCN3990 comes up as HCI_UNCONFIGURED because hci_qca marks its address invalid,
+# and the kernel only lets such a controller be configured through the management
+# interface. Until an address is supplied, every normal open is refused:
 #
-# Must run before bluetooth.service tries to bring the controller up.
+#   hciconfig hci0 up    -> Operation not supported (95)
+#   bluetoothctl show    -> No default controller available
+#
+# So this must run, and finish, before bluetooth.service tries to bring it up.
+# btmgmt's management socket conflicts with bluetoothd's, which is another reason for
+# the ordering.
 After=local-fs.target
 Before=bluetooth.service
-DefaultDependencies=no
 ConditionPathExists=/dev/disk/by-partlabel/persist
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/bluetooth-addr.sh
-# A missing or unreadable persist partition must not fail the boot.
-SuccessExitStatus=1
+# The script bounds each btmgmt call, but bound the unit too so a stuck controller can
+# never hold up boot.
+TimeoutStartSec=40
 
 [Install]
 WantedBy=multi-user.target
