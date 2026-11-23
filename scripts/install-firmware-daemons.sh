@@ -106,6 +106,15 @@ packages=(
     locales sudo bash-completion pciutils usbutils util-linux-extra
     curl wget rsync file vim man-db manpages tree jq htop psmisc lsof
     ethtool dnsutils iperf3 net-tools tcpdump
+
+    # Shell, editing and scripting
+    bc gawk time git ripgrep fd-find python3-venv screen tmux manpages-zh
+    # Network and system diagnostics
+    iputils-arping iputils-tracepath mtr-tiny netcat-openbsd socat
+    lshw strace sysstat inotify-tools
+    # Storage, file systems and archives
+    parted gdisk dosfstools exfatprogs mtools ncdu
+    zip unzip lz4 zstd pv
 )
 in_root apt-get "${apt_options[@]}" update
 in_root apt-get "${apt_options[@]}" install -y --no-install-recommends "${packages[@]}"

@@ -32,15 +32,21 @@ fi
 for pkg in bluez network-manager network-manager-l10n wpasupplicant firmware-atheros \
     wireless-regdb tqftpserv rmtfs protection-domain-mapper systemd-timesyncd \
     docker.io docker-cli containerd runc libvulkan1 mesa-vulkan-drivers vulkan-tools \
-    locales sudo pciutils usbutils vim isc-dhcp-client alsa-utils alsa-ucm-conf openssh-server; do
+    locales sudo pciutils usbutils vim isc-dhcp-client alsa-utils alsa-ucm-conf openssh-server \
+    manpages-zh python3-venv; do
     if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg")" != installed ]; then
         echo "error: package not installed: $pkg" >&2
         exit 1
     fi
 done
 
-for cmd in nmtui nmcli bluetoothctl btmgmt sudo lspci lsusb dhclient iperf3 \
-    aplay amixer vulkaninfo docker dockerd containerd runc resize2fs; do
+for cmd in nmtui nmcli bluetoothctl btmgmt sudo dhclient iperf3 \
+    aplay amixer vulkaninfo docker dockerd containerd runc resize2fs \
+    lsusb lspci lshw htop lsof strace iostat pidstat inotifywait \
+    ssh curl wget dig nc socat arping tracepath mtr traceroute tcpdump \
+    lsblk findmnt fdisk parted gdisk ncdu rsync mkfs.vfat mkfs.exfat mdir \
+    tar gzip bzip2 xz zip unzip lz4 zstd pv \
+    man vim bc gawk /usr/bin/time git rg fdfind jq python3 screen tmux; do
     command -v "$cmd" >/dev/null || { echo "error: command missing: $cmd" >&2; exit 1; }
 done
 

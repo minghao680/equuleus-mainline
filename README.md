@@ -68,10 +68,24 @@ SSH is available once the phone has a routable IP and your public key is in
 `authorized_keys` for the login account. Install your key from the USB console.
 The first SSH start generates the phone's host keys.
 
-The rootfs uses Debian's standard package set and preinstalls `sudo`, `lspci`,
-`lsusb`, `man`, `vim`, `curl`, `tcpdump`, `iperf3`, BlueZ, ALSA utilities,
-Docker and the Mesa Vulkan stack. The image generates `zh_CN.UTF-8` and selects
-it in `/etc/locale.conf`. Use `locale` to check the settings for your session.
+The rootfs uses Debian's standard package set. Its preinstalled tools cover
+hardware inspection, networking, storage and everyday terminal use. The selection
+draws on the Debian 13 Live standard and ARM64 generic image manifests.
+[Live standard packages](https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.8.0-amd64-standard.iso.packages)
+· [ARM64 generic packages](https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-arm64.json)
+
+| Task | Commands included |
+|---|---|
+| Hardware and processes | `lsusb`, `lspci`, `lshw`, `htop`, `lsof`, `strace`, `iostat`, `pidstat`, `inotifywait` |
+| Networking | `nmtui`, `ssh`, `curl`, `wget`, `dig`, `nc`, `socat`, `arping`, `tracepath`, `traceroute`, `mtr`, `tcpdump`, `iperf3` |
+| Storage and transfers | `lsblk`, `findmnt`, `fdisk`, `parted`, `gdisk`, `ncdu`, `rsync`, `mkfs.vfat`, `mkfs.exfat`, `mdir` |
+| Archives | `tar`, `gzip`, `bzip2`, `xz`, `zip`, `unzip`, `lz4`, `zstd`, `pv` |
+| Terminal and scripting | `sudo`, `vim`, `git`, `rg`, `fdfind`, `screen`, `tmux`, `bc`, `gawk`, `jq`, `python3 -m venv` |
+
+The image also includes BlueZ, ALSA utilities, Docker and the Mesa Vulkan stack.
+It generates `zh_CN.UTF-8`, selects it in `/etc/locale.conf` and includes Chinese
+man pages where Debian provides them. Use `locale` to check the settings for
+your session.
 
 Use `bluetoothctl show` and `bluetoothctl --timeout 12 scan on` to check the
 Bluetooth controller. The boot service reads the factory address on the phone
