@@ -63,13 +63,23 @@ while [ "$i" -lt 50 ]; do
 done
 [ -e "/sys/class/bluetooth/$HCI" ] || { echo "[bt] $HCI never appeared"; exit 0; }
 
-hciconfig "$HCI" down 2>/dev/null || true
+# The controller must be up before btmgmt can talk to it: against a DOWN controller
+# btmgmt blocks indefinitely and the unit hangs in "activating", which is what
+# happened on hardware. Bringing it up first, with a timeout, keeps the unit bounded.
+hciconfig "$HCI" up 2>/dev/null || true
+
 if command -v btmgmt >/dev/null 2>&1; then
-    btmgmt --index 0 power off 2>/dev/null || true
-    btmgmt --index 0 public-addr "$addr" 2>&1 | tail -2
+    # A controller that cannot init will never accept an address; do not wait on it.
+    if timeout 15 btmgmt --index 0 info >/dev/null 2>&1; then
+        timeout 10 btmgmt --index 0 power off 2>/dev/null || true
+        timeout 10 btmgmt --index 0 public-addr "$addr" 2>&1 | tail -2 || true
+        hciconfig "$HCI" up 2>/dev/null || true
+    else
+        echo "[bt] $HCI did not respond to btmgmt; leaving the address alone"
+        exit 0
+    fi
 else
     echo "[bt] btmgmt not available"
 fi
-hciconfig "$HCI" up 2>/dev/null || true
 
 echo "[bt] $HCI address set to $addr"
