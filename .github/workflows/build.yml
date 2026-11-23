@@ -298,7 +298,12 @@ jobs:
         id: rom-cache
         with:
           path: rom/images
-          key: stock-rom-${{ env.ROM_VERSION }}
+          # The suffix identifies what the cache holds, not just which ROM it came
+          # from. Without it, adding bluetooth.img to the extraction left every
+          # existing cache valid and the new file never appeared - the extraction
+          # step is skipped on a hit. Bump the suffix whenever the set of extracted
+          # images changes.
+          key: stock-rom-${{ env.ROM_VERSION }}-v2-modemu-vendor-bt
 
       - name: Extract firmware from the stock ROM
         if: steps.rom-cache.outputs.cache-hit != 'true'
@@ -335,14 +340,28 @@ jobs:
           mkdir -p rom/images
           if [ -f rom/images/bluetooth.img ]; then
             echo "  already present"
-          elif [ -f rom/stock.tgz ]; then
-            tar -xzf rom/stock.tgz -C rom --wildcards '*/images/bluetooth.img'
-            find rom \( -name 'bluetooth.img' \) -type f | while read -r f; do
-              echo "  found $f"
-              mv -f "$f" rom/images/
-            done
-          else
-            echo "no ROM archive and no bluetooth.img" >&2
+            ls -l rom/images/
+            exit 0
+          fi
+
+          # A cache hit skips the extraction step, and the archive is not cached, so
+          # fetch it here when bluetooth.img is missing. This is the only step that
+          # needs it and it runs unconditionally, which makes the build independent
+          # of whether the cache predates bluetooth.img.
+          if [ ! -f rom/stock.tgz ]; then
+            echo "  fetching the ROM to extract bluetooth.img"
+            curl -fL --retry 3 --max-time 1800 -o rom/stock.tgz \
+              "https://cdnorg.d.miui.com/$ROM_VERSION/$ROM_FILE"
+          fi
+
+          tar -xzf rom/stock.tgz -C rom --wildcards '*/images/bluetooth.img' || true
+          find rom \( -name 'bluetooth.img' \) -type f | while read -r f; do
+            echo "  found $f"
+            mv -f "$f" rom/images/
+          done
+
+          if [ ! -f rom/images/bluetooth.img ]; then
+            echo "bluetooth.img still missing after extraction" >&2
             exit 1
           fi
           ls -l rom/images/
