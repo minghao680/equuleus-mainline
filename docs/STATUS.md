@@ -175,10 +175,10 @@ ath10k_snoc 18800000.wifi: htt-ver 3.73 wmi-op 4 htt-op 3 hwcrypto 1
 
 ```
 $ ip -brief link
-wlan0            UP   2e:0c:c3:8f:a5:ab  <BROADCAST,MULTICAST,UP>
+wlan0            UP   <address>  <BROADCAST,MULTICAST,UP>
 
 $ iw dev wlan0 scan
-BSS 50:33:f0:9c:8d:66  signal: -32.00 dBm  SSID: ...
+BSS <address>  signal: -32.00 dBm  SSID: ...
 ```
 
 Two harmless leftovers: `invalid MAC address; choosing random` because
@@ -193,7 +193,7 @@ tqftpserv from sid rather than trixie.
 WiFi, with the factory MAC applied from persist:
 
 ```
-Connected to 52:33:f0:9c:8d:66 (on wlan0)
+Connected to <BSSID> (on wlan0)
         SSID: (5 GHz AP)
         freq: 5180.0
         signal: -25 dBm

@@ -1,25 +1,6 @@
 #!/bin/bash
-# =============================================================================
-# Build a Debian arm64 root filesystem with systemd and turn it into an ext4
-# image ready to flash to the phone's userdata partition.
-#
-# The kernel already provides everything systemd needs: cgroups, namespaces,
-# tmpfs with POSIX ACLs, epoll/timerfd/signalfd, autofs. What is missing is a
-# root filesystem, which is what this produces.
-#
-# Requirements on the build host:
-#   mmdebstrap, arch-test, qemu-aarch64-static, mke2fs, a Debian mirror
-#
-# Environment:
-#   ROOT      rootfs directory   (default: $HOME/rootfs-arm64)
-#   IMG       output ext4 image  (default: ./out/rootfs.ext4)
-#   SIZE_MB   image size         (default: 4096)
-#   MIRROR    Debian mirror      (default: http://deb.debian.org/debian)
-#   SUITE     Debian suite       (default: trixie)
-#
-# usage: scripts/build-rootfs.sh
-# =============================================================================
-
+# Build the standard Debian arm64 userland, install device packages and configure systemd.
+# Set BUILD_IMAGE=0 to stage ROM firmware before generating the ext4 image.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -28,49 +9,63 @@ OUT=${OUT:-$REPO/out}
 ROOT=${ROOT:-$HOME/rootfs-arm64}
 IMG=${IMG:-$OUT/rootfs.ext4}
 SIZE_MB=${SIZE_MB:-4096}
-MIRROR=${MIRROR:-http://deb.debian.org/debian}
+MIRROR=${MIRROR:-https://deb.debian.org/debian}
 SUITE=${SUITE:-trixie}
+BUILD_IMAGE=${BUILD_IMAGE:-1}
 
 say() { printf '\n=== %s ===\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-for tool in mmdebstrap mke2fs chroot; do
-    command -v "$tool" >/dev/null 2>&1 || die "$tool not found"
+[[ $BUILD_IMAGE == 0 || $BUILD_IMAGE == 1 ]] || die 'BUILD_IMAGE must be 0 or 1'
+for tool in mmdebstrap arch-test systemctl; do
+    command -v "$tool" >/dev/null || die "$tool not found"
 done
-[ -e /usr/bin/qemu-aarch64-static ] || die "qemu-aarch64-static not found (apt install qemu-user-static)"
-command -v arch-test >/dev/null 2>&1 || die "arch-test not found (apt install arch-test)"
+arch-test arm64 || die 'arm64 execution unavailable (install and register qemu-user-static)'
 
-
-mkdir -p "$OUT"
-
-# -----------------------------------------------------------------------------
-if [ -d "$ROOT" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then
-    say "reusing existing rootfs at $ROOT"
-else
-    say "building Debian $SUITE arm64 rootfs"
-    rm -rf "$ROOT"
-    $SUDO mmdebstrap \
-        --arch=arm64 \
-        --variant=minbase \
-        --include=systemd,systemd-sysv,udev,dbus,dbus-broker,kmod,\
-iproute2,iputils-ping,ifupdown,ca-certificates,openssh-server,\
-e2fsprogs,util-linux,procps,less,nano \
+$SUDO mkdir -p -- "$ROOT"
+ROOT=$(realpath -e -- "$ROOT")
+[[ $ROOT != / ]] || die 'ROOT must be a staging directory'
+if [[ -z $($SUDO ls -A -- "$ROOT") ]]; then
+    say "building standard Debian $SUITE arm64 rootfs"
+    $SUDO mmdebstrap --architecture=arm64 --variant=standard \
+        --components=main,non-free-firmware \
+        --include=systemd-sysv,udev,dbus,kmod,iproute2,iputils-ping,ca-certificates,openssh-server,e2fsprogs,util-linux,procps,less,nano \
         "$SUITE" "$ROOT" "$MIRROR"
+    new_root=1
+else
+    say "reusing existing rootfs at $ROOT"
+    new_root=0
 fi
 
-# -----------------------------------------------------------------------------
-say "configuring the rootfs"
+ROOT="$ROOT" SUITE="$SUITE" MIRROR="$MIRROR" bash "$REPO/scripts/install-firmware-daemons.sh"
 
-echo equuleus | $SUDO tee "$ROOT/etc/hostname" >/dev/null
-$SUDO tee "$ROOT/etc/hosts" >/dev/null <<'EOF'
-127.0.0.1	localhost
-127.0.1.1	equuleus
-::1		localhost ip6-localhost ip6-loopback
+say 'configuring the rootfs'
+if [[ $new_root == 1 ]]; then
+    printf 'equuleus\n' | $SUDO tee "$ROOT/etc/hostname" >/dev/null
+    $SUDO tee "$ROOT/etc/hosts" >/dev/null <<'EOF'
+127.0.0.1 localhost
+127.0.1.1 equuleus
+::1       localhost ip6-localhost ip6-loopback
 EOF
+fi
 
-# The only console on this device is the USB CDC-ACM gadget, and it only exists
-# after the initramfs created it, so systemd needs an explicit getty on it.
-$SUDO mkdir -p "$ROOT/etc/systemd/system/serial-getty@ttyGS0.service.d"
+# The initramfs mounts userdata. Ask systemd to grow the ext4 filesystem to
+# the size of its backing device after switching to the real root.
+$SUDO touch "$ROOT/etc/fstab"
+fstab=$($SUDO awk '
+    $1 !~ /^#/ && $2 == "/" && $3 == "ext4" {
+        root_found = 1
+        if ($4 !~ /(^|,)x-systemd\.growfs(,|$)/) $4 = $4 ",x-systemd.growfs"
+    }
+    { print }
+    END {
+        if (!root_found) print "UUID=__ROOT_UUID__ / ext4 defaults,noatime,x-systemd.growfs 0 1"
+    }
+' "$ROOT/etc/fstab")
+printf '%s\n' "$fstab" | $SUDO tee "$ROOT/etc/fstab" >/dev/null
+
+# USB CDC-ACM is the console on the headless device.
+$SUDO install -d "$ROOT/etc/systemd/system/serial-getty@ttyGS0.service.d" "$ROOT/usr/local/sbin"
 $SUDO tee "$ROOT/etc/systemd/system/serial-getty@ttyGS0.service.d/autologin.conf" >/dev/null <<'EOF'
 [Service]
 ExecStart=
@@ -78,114 +73,30 @@ ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
 Type=idle
 EOF
 
-UUID=$(cat /proc/sys/kernel/random/uuid)
-$SUDO tee "$ROOT/etc/fstab" >/dev/null <<EOF
-# <file system>        <mount point>  <type>     <options>               <dump> <pass>
-UUID=$UUID             /              ext4       defaults,noatime        0      1
-proc                   /proc          proc       defaults                0      0
-sysfs                  /sys           sysfs      defaults                0      0
-devtmpfs               /dev           devtmpfs   mode=0755,nosuid        0      0
-tmpfs                  /dev/shm       tmpfs      nosuid,nodev,mode=1777  0      0
-tmpfs                  /tmp           tmpfs      nosuid,nodev            0      0
-EOF
+# ADSP uses firmware on the real root. The packaged rmtfs unit owns MPSS startup.
+for unit in adsp-start wifi-mac bluetooth-addr; do
+    $SUDO install -m 0644 "$REPO/systemd/$unit.service" "$ROOT/etc/systemd/system/$unit.service"
+done
+for helper in wifi-mac bluetooth-addr net-stability; do
+    $SUDO install -m 0755 "$REPO/systemd/$helper.sh" "$ROOT/usr/local/sbin/$helper.sh"
+done
 
-$SUDO mount --bind /dev  "$ROOT/dev"
-$SUDO mount -t proc proc "$ROOT/proc"
-$SUDO mount -t sysfs sys "$ROOT/sys"
-$SUDO chroot "$ROOT" systemctl enable serial-getty@ttyGS0.service
-$SUDO chroot "$ROOT" systemctl enable systemd-networkd.service
-$SUDO chroot "$ROOT" systemctl set-default multi-user.target
-$SUDO umount "$ROOT/sys" "$ROOT/proc" "$ROOT/dev" 2>/dev/null || true
+# NetworkManager handles Wi-Fi, saved profiles and DHCP. Apply the factory MAC
+# before it manages wlan0 and retain it during scans and association.
+$SUDO install -D -m 0644 "$REPO/config/NetworkManager-equuleus.conf" \
+    "$ROOT/etc/NetworkManager/conf.d/20-equuleus.conf"
+for unit in systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service networking.service; do
+    if $SUDO test -f "$ROOT/usr/lib/systemd/system/$unit"; then
+        $SUDO systemctl --root="$ROOT" disable "$unit"
+    fi
+done
+$SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.service \
+    wifi-mac.service NetworkManager.service bluetooth-addr.service bluetooth.service \
+    ssh.service docker.service containerd.service
+$SUDO systemctl --root="$ROOT" set-default multi-user.target
 
-# The ADSP firmware lives on this filesystem, but remoteproc is a built-in driver
-# and probes before the root is mounted, so it fails with -ENOENT. Start it once
-# more from userspace, where /lib/firmware is reachable.
-# Started at sysinit rather than multi-user: the QDSP6 audio components only
-# register once the ADSP is up, and the sound card probes well before
-# multi-user. At multi-user.target the card sat in "deferred probe pending:
-# error getting cpu dai name" indefinitely.
-$SUDO install -m 644 "$REPO/systemd/adsp-start.service" \
-    "$ROOT/etc/systemd/system/adsp-start.service"
-$SUDO mkdir -p "$ROOT/etc/systemd/system/sysinit.target.wants"
-$SUDO ln -sf /etc/systemd/system/adsp-start.service \
-    "$ROOT/etc/systemd/system/sysinit.target.wants/adsp-start.service"
-
-# The modem needs starting too: the WCN3990 Wi-Fi firmware runs on it and
-# qcom_q6v5_mss has auto_boot = false. That start is done by `rmtfs -s` - rmtfs
-# spawns the modem once it is ready to serve file requests - so there is
-# deliberately no separate modem-start unit here. Two starters would race, and
-# the ordering that matters (rmtfs ready before the modem boots) only holds if
-# rmtfs is the one doing it.
-$SUDO install -m 644 "$REPO/systemd/modem-start.service" \
-    "$ROOT/etc/systemd/system/modem-start.service.disabled" 2>/dev/null || true
-
-# ath10k falls back to a random MAC unless the device tree or firmware supplies
-# one. The factory address lives on the persist partition; this unit reads it at
-# boot so no device-specific value is ever stored in the repository.
-$SUDO install -m 755 "$REPO/systemd/wifi-mac.sh" "$ROOT/usr/local/sbin/wifi-mac.sh"
-$SUDO install -m 644 "$REPO/systemd/wifi-mac.service" \
-    "$ROOT/etc/systemd/system/wifi-mac.service"
-$SUDO ln -sf /etc/systemd/system/wifi-mac.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/wifi-mac.service"
-
-# The WCN3990 comes up as 00:00:00:00:00:00 and stays DOWN, so bluetoothctl reports
-# "No default controller available". The factory address is six raw bytes on the
-# persist partition, at /persist/wlan_bt/bt.mac - not wlan.mac, which differs in one
-# nibble. Read at runtime so nothing device-specific is stored here.
-#
-# Ordered before bluetooth.service because the address has to be set while the
-# controller is still down.
-$SUDO install -m 755 "$REPO/systemd/bluetooth-addr.sh" \
-    "$ROOT/usr/local/sbin/bluetooth-addr.sh"
-$SUDO install -m 644 "$REPO/systemd/bluetooth-addr.service" \
-    "$ROOT/etc/systemd/system/bluetooth-addr.service"
-$SUDO ln -sf /etc/systemd/system/bluetooth-addr.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/bluetooth-addr.service"
-
-# bluetoothd itself is installed by install-firmware-daemons.sh (the bluez package);
-# enable its unit here so the controller is brought up at boot.
-$SUDO mkdir -p "$ROOT/etc/systemd/system/multi-user.target.wants"
-$SUDO ln -sf /usr/lib/systemd/system/bluetooth.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/bluetooth.service"
-
-# NetworkManager provides nmtui, which is the only practical way to configure WiFi
-# on a device with a dead panel. It replaces systemd-networkd, and the two must not
-# both manage wlan0.
-$SUDO ln -sf /usr/lib/systemd/system/NetworkManager.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
-$SUDO ln -sf /usr/lib/systemd/system/NetworkManager-dispatcher.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/NetworkManager-dispatcher.service"
-# networkd would fight NM for wlan0.
-$SUDO rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" 2>/dev/null || true
-$SUDO rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/networking.service" 2>/dev/null || true
-
-# Keep the factory MAC: NM randomises scan addresses by default.
-$SUDO mkdir -p "$ROOT/etc/NetworkManager/conf.d"
-$SUDO tee "$ROOT/etc/NetworkManager/conf.d/10-managed.conf" >/dev/null <<'EOF'
-[main]
-plugins=keyfile
-
-[device]
-wifi.scan-rand-mac-address=no
-EOF
-
-# Docker needs containerd running first; the unit pulls it in but enable it
-# explicitly so a manual start works too.
-$SUDO ln -sf /usr/lib/systemd/system/containerd.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/containerd.service" 2>/dev/null || true
-$SUDO ln -sf /usr/lib/systemd/system/docker.service \
-    "$ROOT/etc/systemd/system/multi-user.target.wants/docker.service" 2>/dev/null || true
-$SUDO ln -sf /usr/lib/systemd/system/docker.socket \
-    "$ROOT/etc/systemd/system/sockets.target.wants/docker.socket" 2>/dev/null || true
-
-# -----------------------------------------------------------------------------
-# The image is built as its own step so a caller can add firmware or daemons to
-# the rootfs and then produce the image once, rather than building it twice.
-say "creating the ext4 image"
-ROOT="$ROOT" OUT="$OUT" IMG="$IMG" SIZE_MB="$SIZE_MB" \
-    "$REPO/scripts/make-rootfs-image.sh"
-
-say "done"
-echo "  flash with:"
-echo "    fastboot -s <serial> flash userdata $IMG"
-echo "    fastboot -s <serial> flash boot $OUT/boot.img"
+if [[ $BUILD_IMAGE == 1 ]]; then
+    ROOT="$ROOT" OUT="$OUT" IMG="$IMG" SIZE_MB="$SIZE_MB" bash "$REPO/scripts/make-rootfs-image.sh"
+else
+    printf 'rootfs ready for firmware staging at %s\n' "$ROOT"
+fi

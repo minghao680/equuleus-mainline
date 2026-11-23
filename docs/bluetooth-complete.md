@@ -8,7 +8,7 @@
 ## 最终结果
 
 ```
-Controller A4:50:46:B3:ED:3C (public)
+Controller <factory-BD_ADDR> (public)
         Manufacturer: 0x001d (29)
         Version: 0x09 (9)
         Name: equuleus
@@ -16,7 +16,7 @@ Controller A4:50:46:B3:ED:3C (public)
         PowerState: on
 
 hci0:   Type: Primary  Bus: UART
-        BD Address: A4:50:46:B3:ED:3C
+        BD Address: <factory-BD_ADDR>
         ACL MTU: 1024:7  SCO MTU: 60:8
         UP RUNNING
 ```

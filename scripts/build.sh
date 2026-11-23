@@ -2,11 +2,8 @@
 # =============================================================================
 # Build mainline Linux for the Xiaomi Mi 8 Pro (equuleus, SDM845).
 #
-# The kernel is NOT patched. The only changes made to the tree are:
-#   * one new file: arch/arm64/boot/dts/qcom/sdm845-xiaomi-equuleus.dts
-#   * one added line in arch/arm64/boot/dts/qcom/Makefile
-#
-# Everything else is a stock sdm845 mainline kernel plus the config in config/.
+# Install the equuleus device tree, kernel overlays, panel driver and configuration
+# into the supplied Linux source tree before building Image.gz and the DTB.
 #
 # Environment:
 #   KERNEL_SRC   path to an existing kernel tree      (default: $HOME/linux-sdm845)

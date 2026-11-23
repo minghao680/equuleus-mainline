@@ -1,190 +1,132 @@
 # Mainline Linux on the Xiaomi Mi 8 Pro (equuleus)
 
-Getting a **stock mainline Linux kernel** to boot on the Xiaomi Mi 8 Pro
-(`equuleus`, Qualcomm SDM845) and give you a usable shell over USB — on a phone
-whose display is dead.
-
-The kernel is **not patched**. The whole change is:
-
-* one new device tree, `dts/sdm845-xiaomi-equuleus.dts`
-* one line added to `arch/arm64/boot/dts/qcom/Makefile`
-* a config, an initramfs, and a packaging script that respects what the Xiaomi
-  bootloader actually validates
-
----
+This port runs Debian 13 arm64 with systemd on the Xiaomi Mi 8 Pro (`equuleus`,
+Snapdragon 845). A USB CDC-ACM console gives access to a phone with a broken
+panel. CI builds Linux `v7.1-rc1` with the equuleus device tree, board patches
+and Samsung EA8074 panel driver in this repository.
 
 ## Status
 
-| | |
+| Feature | Hardware evidence |
 |---|---|
-| Boots to userspace | **yes** — `Run /init as init process` |
-| Symmetric multiprocessing | **yes** — all 8 cores online |
-| RAM | **yes** — 7,797,064 kB detected (8 GB board) |
-| USB CDC-ACM console | **yes** — appears as a serial port on the host |
-| UART `ttyMSM0` | **yes** — `a84000.serial` probes |
-| UFS storage | **yes** — `SAMSUNG KLUDG4U1EA-B0C1`, 6 LUNs, 123 GB + 4.5 GB |
-| Display controller | **yes** — `msm 1.13.0`, `card0-DSI-1` reports `connected` |
-| Stable operation | **yes** — no more 27 s reboot loop |
-| **Debian + systemd rootfs** | **yes** — `systemctl is-system-running` → `running` |
-| Touch / WiFi / modem | not enabled |
+| Boot and storage | Debian on userdata, eight CPU cores and six UFS LUNs |
+| USB access | Serial console on `ttyGS0`, with automatic root login |
+| Wi-Fi | The factory address is read from `persist`. A 5 GHz test reached about 66 Mb/s and its short pings had zero loss. |
+| Bluetooth | UART6 uses RTS/CTS. Configuring the factory address brought up `hci0` and a scan found nearby devices. |
+| CPU | `qcom-cpufreq-hw` reached 1.77 GHz on the little cores and 2.65 GHz on the big cores |
+| GPU | Mesa Freedreno FD630 ran glmark2, and Turnip exposed Vulkan 1.3 |
+| Audio | ALSA enumerated playback and capture PCMs. The TAS2557 speaker amplifier loaded its firmware. |
+| Battery and clock | PMI8998 reports charge and voltage. `systemd-timesyncd` synchronizes the system clock once networking is up. |
 
-The end state is a Debian 13 arm64 userland with systemd as PID 1, reachable over
-a USB serial console with automatic root login:
+The bring-up notes include measured values and failure logs. [Hardware status](docs/STATUS.md)
 
+## Install a release
+
+Get `boot.img` and `rootfs.ext4.gz` for the same version. [GitHub releases](https://github.com/minghao680/equuleus-mainline/releases)
+
+Flashing requires an unlocked `equuleus` bootloader and **erases userdata**.
+Back up anything you need from the phone, including saved NetworkManager
+profiles. Enter fastboot with Volume Down + Power, check the product, and
+substitute your device's serial throughout.
+
+```bash
+gunzip -k rootfs.ext4.gz
+fastboot devices
+fastboot -s SERIAL getvar product
+# Confirm the product is equuleus before flashing.
+fastboot -s SERIAL flash boot boot.img
+fastboot -s SERIAL flash userdata rootfs.ext4
+fastboot -s SERIAL reboot
 ```
-Debian GNU/Linux 13 equuleus ttyGS0
-equuleus login: root (automatic login)
-Linux equuleus 7.1.0-rc1-sdm845 aarch64
-root@equuleus:~#
+
+Open the USB serial port on the host at 115200 baud. The initramfs creates the
+CDC-ACM gadget, mounts `/dev/sda21` and switches to systemd. If the root mount
+fails, it exposes a shell over USB.
+
+The release image has a 4 GiB ext4 filesystem for transport. On first boot,
+`x-systemd.growfs` in `fstab` expands it to fill the existing userdata partition.
+Check the new capacity with `df -h /`. On an older install, confirm that `/` is
+ext4 on userdata with `findmnt -no SOURCE,FSTYPE /` before growing it with
+`resize2fs /dev/sda21`.
+
+## After installing
+
+Run `nmtui` on the USB console to select a Wi-Fi network and save its profile.
+NetworkManager uses saved profiles on the phone and automatically connects to
+an available one with autoconnect enabled. For multiple networks, use
+`connection.autoconnect-priority` to express a preference. A new image comes
+with an empty set of Wi-Fi profiles.
+
+```bash
+nmtui
+nmcli device status
+# Optional. Replace PROFILE with the saved profile name.
+nmcli connection modify PROFILE connection.autoconnect yes connection.autoconnect-priority 10
 ```
 
-Tested kernel: `7.1.0-rc1` (`linux-sdm845-7.1-rc1-r0`, the postmarketOS package),
-built with clang 19.1.7 / LLD 19.1.7.
+SSH is available once the phone has a routable IP and your public key is in
+`authorized_keys` for the login account. Install your key from the USB console.
 
----
+The rootfs uses Debian's standard package set and preinstalls `sudo`, `lspci`,
+`lsusb`, `man`, `vim`, `curl`, `tcpdump`, `iperf3`, BlueZ, ALSA utilities,
+Docker and the Mesa Vulkan stack. The image generates `zh_CN.UTF-8` and selects
+it in `/etc/locale.conf`. Use `locale` to check the settings for your session.
 
-## Requirements
+Use `bluetoothctl show` and `bluetoothctl --timeout 12 scan on` to check the
+Bluetooth controller. The boot service reads the factory address on the phone
+and supplies it through the kernel management interface before BlueZ starts.
+More detail is available in the [Bluetooth bring-up notes](docs/bluetooth-complete.md).
 
-* A kernel tree. This was developed against `7.1.0-rc1`; other versions may need
-  device tree adjustments.
+## Build locally
 
-  ```bash
-  git clone --depth 1 https://github.com/SoMainline/linux.git "$HOME/linux-sdm845"
-  ```
+Use a Linux host with `mmdebstrap`, `arch-test`, registered `qemu-aarch64-static`,
+`e2fsprogs`, `simg2img`, `cpio`, `gzip`, `python3`, a working `mkbootimg` and the
+`aarch64-linux-gnu-` toolchain. The package installer and loop mounts need root
+or passwordless sudo. CI uses an isolated APT source configuration to install
+Debian packages and permits only `tqftpserv` from sid to resolve the modem's
+vendor firmware path.
 
-* `aarch64-linux-gnu-` cross compiler, `mkbootimg`, `cpio`, `gzip`, `python3`
-* A **statically linked aarch64 busybox** (the build script explains how to get
-  one if you don't have it)
-* An unlocked bootloader on the phone
+```bash
+export ROOT="$HOME/rootfs-arm64"
+export ROM_DIR=/path/to/extracted/fastboot-rom/images
 
----
+BUILD_IMAGE=0 scripts/build-rootfs.sh
+scripts/prepare-firmware.sh
+scripts/make-rootfs-image.sh
+scripts/verify-rootfs-image.sh
+```
 
-## Build
+`ROM_DIR` should contain `modem.img`, `vendor.img` and `bluetooth.img` from the
+stock firmware. Run `scripts/build-rootfs.sh` without `BUILD_IMAGE=0` to build
+an ext4 image directly from the staged userspace. Both paths reuse `ROOT` when
+it already exists. Use a fresh directory for a clean image.
+
+To build `out/boot.img`, prepare a Linux `v7.1-rc1` tree and a static arm64
+BusyBox. Point `GPU_FW_DIR` at the staged Qualcomm firmware and replace the
+stock SQE file with a recent linux-firmware copy as described below.
+[Adreno firmware](docs/gpu-firmware.md)
 
 ```bash
 export KERNEL_SRC="$HOME/linux-sdm845"
-export BUSYBOX=/path/to/static/aarch64/busybox
-
+export BUSYBOX=/path/to/static/arm64/busybox
+export GPU_FW_DIR="$ROOT/lib/firmware/qcom"
 scripts/build.sh
+python3 scripts/verify-image.py out/boot.img
 ```
 
-Output: `out/boot.img` (64 MiB, ready to flash).
-
-The script copies the device tree into the kernel tree, installs the panel driver from `kernel/`,
-installs `config/equuleus.config`, builds `Image.gz` + the DTB, builds the
-initramfs and packs the boot image. Run `scripts/verify-image.py out/boot.img`
-afterwards if you want to see what it checks.
-
-### Root filesystem
-
-```bash
-scripts/build-rootfs.sh
-```
-
-Builds a Debian arm64 rootfs with systemd, enables a serial getty on the USB
-console with automatic root login, and produces `out/rootfs.ext4`. Needs
-`mmdebstrap`, `arch-test`, `qemu-aarch64-static` and passwordless sudo.
-
-## Flash
-
-```bash
-fastboot -s <serial> flash userdata out/rootfs.ext4
-fastboot -s <serial> flash boot     out/boot.img
-fastboot -s <serial> reboot
-```
-
-The initramfs mounts the rootfs from the UFS userdata partition and `switch_root`s
-into systemd. If anything fails on the way it drops to a shell on the USB console
-instead of failing silently — that console is the only way into this device.
-
-There is no on-device output: `console=ttyMSM0` only works if you have a 1.8 V
-UART wired to the board, which is why the initramfs brings up USB instead.
-
----
-
-## Three details that cost the most time
-
-### 1. The ABL requires the DTB immediately after the gzip stream
-
-The bootloader computes where the compressed kernel ends and expects the FDT
-magic right there. Any padding — including page alignment — makes it log:
-
-```
-BootLinux: GetImage failed! DTB offset is incorrect,
-          kernel image does not have appended DTB
-```
-
-So the kernel blob must be exactly `cat Image.gz dtb`. `pack-bootimg.sh`
-verifies `delta == 0` and refuses to continue otherwise. Both the stock MIUI
-image and the engineering firmware image have `delta == 0`; every image that was
-page-aligned failed.
-
-### 2. `configfs` must be mounted before creating the gadget
-
-`/sys/kernel/config` is only a **mountpoint**. If configfs is not mounted there,
-`mkdir /sys/kernel/config/usb_gadget/g1` silently fails inside sysfs, the gadget
-never binds, and the host never sees a USB device — even though DWC3, the PHY
-and the UDC all probed correctly.
-
-This one bug made the kernel look completely dead for a long time: no USB, no
-output, device unresponsive. `scripts/verify-image.py` now checks that the
-packed `/init` mounts configfs.
-
-### 3. "Device disappeared from USB" is normal
-
-When the ABL hands control to the kernel it tears down its own fastboot USB
-interface. The device vanishing from the host tells you **nothing** about whether
-the kernel is alive. The only reliable signal is the USB gadget appearing a few
-seconds later.
-
----
-
-### 3. The bootloader leaves MDSS running, and nobody owns it
-
-This is the one that makes the phone reboot every ~27 seconds with **no panic
-message at all**.
-
-The Xiaomi bootloader turns on the display controller to scan out the "Mi" splash
-from DDR and never turns it off. If no Linux driver claims MDSS, nothing votes for
-that memory path. As soon as UFS finishes probing, `qnoc-sdm845` reaches
-`sync_state()`, releases its boot-time bandwidth floors, the orphaned MDSS DMA
-read hits an unvoted path and the NoC deadlocks. The watchdog then resets the
-SoC. The kernel looks dead but was never crashing — the bus was gone.
-
-The fix is to give MDSS an owner: enable `dispcc`, `mdss`, DSI0 and the panel so
-the DPU holds the `mdp0-mem` / `mdp1-mem` votes and shuts its DMA engines down
-when blanked. The panel driver lives in `kernel/panel-samsung-ea8074.c`.
-
-Turning CPU idle off (`cpuidle.off=1`) or disabling `cluster-sleep-0` "fixes" the
-symptom too, and both were rejected: they trade away real functionality instead
-of fixing the cause.
-
----
-
-## Repository layout
-
-```
-dts/        the device tree
-initramfs/  the init script that brings up USB
-kernel/     the EA8074 panel driver source
-config/     the exact kernel config that was tested
-scripts/    build, initramfs, packaging, verification
-docs/       bring-up notes and a reference device tree
-```
-
----
+The ABL expects the DTB directly after the kernel gzip stream. The boot image
+also contains firmware needed before systemd starts. The GitHub Actions jobs
+check the boot layout and inspect the packed ext4 image, including installed
+packages, shared libraries, firmware and the generated locale. A `v*` tag
+publishes the compressed rootfs, boot image and firmware provenance.
+[Build workflow](.github/workflows/build.yml)
 
 ## Credits
 
-The approach — and the method of debugging a headless SDM845 device without a
-UART — follows Mechres' work on the Xiaomi Mi 8 (`dipper`), which is the same
-SoC:
-
-* <https://mechres.dev/post/xiaomi-mi8-dipper-mainline-linux-bringup>
-* <https://github.com/Mechres/xiaomi-mi8-dipper>
-
-Upstream kernel work comes from the sdm845 mainline community.
+The approach follows Mechres' mainline work on the Xiaomi Mi 8 (`dipper`) and
+builds on the SDM845 mainline community's drivers and device trees.
+[Mechres' repository](https://github.com/Mechres/xiaomi-mi8-dipper)
 
 ## License
 
-GPL-2.0, matching the kernel. See `LICENSE`.
+GPL-2.0. [License](LICENSE)

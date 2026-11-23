@@ -1,199 +1,124 @@
 #!/bin/bash
-# =============================================================================
-# Install the firmware daemons the SDM845 WiFi chain needs, then rebuild the
-# rootfs image.
-#
-# WiFi on this SoC does not come up from ath10k alone. The chain is:
-#
-#   modem (MSS) -> GLINK/QRTR -> service discovery -> rmtfs/EFS
-#   -> PDR msm/modem/wlan_pd -> TQFTP serves wlanmdsp.mbn to the modem
-#   -> WLFW QMI service registers -> ath10k_snoc -> wlan0
-#
-# Every one of those is userspace. Nothing here needs a kernel driver, and the
-# modem's "provider: kernel / service: elf_loader" entry in modemuw.jsn is a
-# servreg description rather than an instruction to write one.
-#
-# The one non-obvious detail: tqftpserv must be >= 1.3. Version 1.1 (Debian
-# trixie) only accepts /readonly/firmware/image/, while this modem asks for
-# /readonly/vendor/firmware_mnt/image/. Version 1.3 (Debian sid) accepts both.
-# With 1.1 the log shows "invalid path ... rejecting" and WiFi never appears.
-#
-# Environment:
-#   ROOT   rootfs directory  (default: $HOME/rootfs-arm64)
-#
-# usage: scripts/install-firmware-daemons.sh
-# =============================================================================
-
+# Install the device's Debian packages with APT in the arm64 rootfs.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-. "$SCRIPT_DIR/lib/sudo.sh"
+ROOT=$(realpath -e -- "${ROOT:-$HOME/rootfs-arm64}")
+MIRROR=${MIRROR:-https://deb.debian.org/debian}
+SUITE=${SUITE:-trixie}
 
-MIRROR=${MIRROR:-http://deb.debian.org/debian}
-ROOT=${ROOT:-$HOME/rootfs-arm64}
-WORK=${WORK:-$(mktemp -d)}
-trap 'rm -rf "$WORK"' EXIT
-
-say() { printf '\n=== %s ===\n' "$*"; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-
-[ -d "$ROOT" ] || die "rootfs not found: $ROOT"
-
-mkdir -p "$WORK"
-cd "$WORK"
-
-# -f and -L both matter here. Without -f curl writes the error page into the
-# output file and still exits 0; without -L it does not follow deb.debian.org's
-# redirect to an actual mirror. Together those produced a silent failure that
-# then looked like a corrupt index.
-fetch_index() {
-    curl -fsSL --retry 3 --retry-delay 2 --max-time 900 \
-        "$MIRROR/dists/$1/main/binary-arm64/Packages.gz" -o "$1.gz" \
-        || die "cannot fetch $1 package index from $MIRROR"
-    gzip -t "$1.gz" 2>/dev/null \
-        || die "invalid package index for $1 (mirror did not return gzip)"
+[[ $ROOT != / && -f $ROOT/etc/debian_version && -s $ROOT/var/lib/dpkg/status ]] || {
+    echo "error: expected a bootstrapped Debian rootfs, got $ROOT" >&2
+    exit 1
 }
 
-fetch_pkg() {
-    local suite=$1 pkg=$2
-    local fn
-    # awk exits as soon as it finds the entry, which closes the pipe and makes
-    # gzip die of SIGPIPE. Under pipefail that turns the whole pipeline into a
-    # failure and, because this runs in a command substitution under set -e,
-    # the script exits with no message at all. Hence the || true.
-    fn=$( { gzip -dc "$suite.gz" 2>/dev/null \
-            | awk -v p="$pkg" '$0=="Package: "p{f=1} f&&/^Filename:/{print $2; exit}'; } || true )
-    [ -n "$fn" ] || { echo "  not in $suite: $pkg"; return 1; }
-    echo "  $pkg ($suite) -> $fn"
-    [ -f "$pkg.deb" ] || curl -fsSL --retry 3 --max-time 600 -o "$pkg.deb" "$MIRROR/$fn" \
-        || { echo "  download failed: $pkg"; return 1; }
-    $SUDO dpkg-deb -x "$pkg.deb" "$ROOT" || { echo "  extract failed: $pkg"; return 1; }
+# Isolate the chroot's mounts from the build host. The policy below prevents
+# package scripts from starting services while the image is being assembled.
+if [[ ${1:-} != --isolated ]]; then
+    . "$SCRIPT_DIR/lib/sudo.sh"
+    exec $SUDO env ROOT="$ROOT" MIRROR="$MIRROR" SUITE="$SUITE" \
+        unshare --mount --propagation private bash "$SCRIPT_DIR/install-firmware-daemons.sh" --isolated
+fi
+
+mount --bind /dev "$ROOT/dev"
+mount -t proc proc "$ROOT/proc"
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs "$ROOT/run"
+
+work=$(mktemp -d "$ROOT/run/equuleus-apt.XXXXXXXX")
+chmod 0755 "$work"
+policy="$ROOT/usr/sbin/policy-rc.d"
+resolver="$ROOT/etc/resolv.conf"
+restore() {
+    local target=$1 backup=$2
+    if [[ -e $backup || -L $backup ]]; then
+        mv -fT -- "$backup" "$target"
+    else
+        rm -f -- "$target"
+    fi
 }
-
-say "fetching package indexes"
-fetch_index trixie
-fetch_index sid
-
-say "installing rmtfs and pd-mapper (trixie)"
-fetch_pkg trixie rmtfs
-fetch_pkg trixie protection-domain-mapper
-fetch_pkg trixie libqrtr1
-
-# tqftpserv 1.3 from sid is required: 1.1 rejects the vendor firmware paths this
-# modem actually requests. libzstd is needed by 1.3.
-say "installing tqftpserv 1.3 (sid) and its dependencies"
-fetch_pkg sid tqftpserv
-fetch_pkg trixie libzstd1
-
-# bluez provides bluetoothd, bluetoothctl and btmgmt. Without it the controller
-# probes and hci0 appears, but nothing can drive it and bluetooth-addr.sh has no
-# btmgmt to set the address with. It is not pulled in by anything else here.
-# bluez goes through apt like the other multi-package sets: fetch_pkg extracts a
-# single .deb without resolving dependencies, and bluetoothd needs libdw.so.1 and
-# libasound.so.2. Extracting bluez alone produced a bluetoothd that exits with
-# status 127 ("error while loading shared libraries") and a bluetooth.service that
-# restart-loops five times and gives up.
-say "installing bluez with apt"
-
-# NetworkManager provides nmtui and nmcli. systemd-networkd was the previous
-# default but has no interactive interface, and nmtui is how the network gets
-# configured on a device with no working display.
-# NetworkManager also has a dependency tree (libnm, libndp, and the WiFi supplicant
-# integration); it goes through apt with the rest.
-
-# Docker, NetworkManager and the Vulkan stack each pull in a dependency tree, and
-# fetch_pkg only extracts a single .deb without recording it - docker.io is a
-# metapackage whose /usr/bin/docker lives in docker-cli, so extracting it alone
-# produced an image with dockerd but no CLI. apt resolves the tree and records the
-# packages, which also makes dpkg -l work for later diagnosis.
-say "installing Docker, NetworkManager and Vulkan with apt"
-apt_install() {
-    $SUDO chroot "$ROOT" /bin/sh -c "
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get install -y -qq $* 2>&1 | tail -3
-    " || echo "  apt install failed: $*"
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ -e $work/restore-policy ]]; then
+        restore "$policy" "$work/policy-rc.d.orig" || status=1
+    fi
+    if [[ -e $work/restore-resolver ]]; then
+        restore "$resolver" "$work/resolv.conf.orig" || status=1
+    fi
+    exit "$status"
 }
+trap cleanup EXIT
 
-# apt needs a working sources.list and a resolv.conf inside the rootfs.
-$SUDO mkdir -p "$ROOT/etc/apt/sources.list.d"
-$SUDO tee "$ROOT/etc/apt/sources.list.d/debian.list" >/dev/null <<EOF
-deb $MIRROR trixie main
+if [[ -e $policy || -L $policy ]]; then
+    cp -a -- "$policy" "$work/policy-rc.d.orig"
+fi
+: > "$work/restore-policy"
+printf '#!/bin/sh\nexit 101\n' > "$work/policy-rc.d"
+install -m 0755 -T "$work/policy-rc.d" "$policy"
+
+if [[ -e $resolver || -L $resolver ]]; then
+    cp -a -- "$resolver" "$work/resolv.conf.orig"
+fi
+: > "$work/restore-resolver"
+install -m 0644 -T /etc/resolv.conf "$resolver"
+
+keyring=/usr/share/keyrings/debian-archive-keyring.gpg
+printf 'deb [signed-by=%s] %s %s main non-free-firmware\n' \
+    "$keyring" "$MIRROR" "$SUITE" > "$work/sources.list"
+: > "$work/preferences"
+if [[ $SUITE != sid ]]; then
+    # Trixie's tqftpserv 1.1 rejects the modem's vendor firmware path. Allow
+    # tqftpserv from sid while keeping its dependencies on the target suite.
+    printf 'deb [signed-by=%s] %s sid main\n' "$keyring" "$MIRROR" >> "$work/sources.list"
+    cat > "$work/preferences" <<'EOF'
+Package: tqftpserv
+Pin: release n=sid
+Pin-Priority: 600
+
+Package: *
+Pin: release n=sid
+Pin-Priority: -1
 EOF
-$SUDO cp -f /etc/resolv.conf "$ROOT/etc/resolv.conf" 2>/dev/null || true
-$SUDO mount --bind /dev "$ROOT/dev" 2>/dev/null || true
-$SUDO mount -t proc proc "$ROOT/proc" 2>/dev/null || true
-$SUDO mount -t sysfs sys "$ROOT/sys" 2>/dev/null || true
-
-$SUDO chroot "$ROOT" /bin/sh -c 'apt-get update -qq 2>&1 | tail -2' || true
-
-apt_install bluez
-apt_install docker.io containerd runc
-apt_install network-manager
-apt_install libvulkan1 mesa-vulkan-drivers vulkan-tools
-
-# ath10k needs board-2.bin for WCN3990/hw1.0, and without it the interface never
-# appears:
-#   ath10k_snoc 18800000.wifi: failed to fetch board-2.bin or board.bin
-#     from ath10k/WCN3990/hw1.0
-# firmware-atheros provides it. The stock ROM ships bdwlan.* and bdf_*.bin instead,
-# which are a different format.
-apt_install firmware-atheros
-
-# Nothing pulls in a DHCP client, so wlan0 gets an address only by hand.
-apt_install isc-dhcp-client
-
-$SUDO umount "$ROOT/sys" "$ROOT/proc" "$ROOT/dev" 2>/dev/null || true
-
-say "installing WiFi userspace tools"
-fetch_pkg trixie iw
-fetch_pkg trixie wpasupplicant
-fetch_pkg trixie libnl-3-200
-fetch_pkg trixie libnl-genl-3-200
-fetch_pkg trixie libnl-route-3-200
-fetch_pkg trixie rfkill
-
-# The PMIC RTC reports 1970 and the kernel fabricates a wall clock from it, so
-# nothing that depends on real time works until NTP has run once.
-say "installing time synchronisation"
-fetch_pkg trixie systemd-timesyncd
-fetch_pkg trixie util-linux-extra
-
-# -----------------------------------------------------------------------------
-say "enabling services"
-W="$ROOT/etc/systemd/system/multi-user.target.wants"
-$SUDO mkdir -p "$W"
-for u in rmtfs.service pd-mapper.service tqftpserv.service systemd-timesyncd.service; do
-    $SUDO ln -sf "/usr/lib/systemd/system/$u" "$W/$u"
-    echo "  enabled: $u"
-done
-
-# The modem asks for files under /readonly/vendor/firmware_mnt/image/ and
-# /readonly/firmware/image/, which tqftpserv maps onto /lib/firmware/. Put the
-# images where it can reach them.
-say "staging firmware images for tqftpserv"
-SRC="$ROOT/lib/firmware/qcom/sdm845/mi8"
-DEST="$ROOT/lib/firmware/image"
-if [ -d "$SRC" ]; then
-    $SUDO mkdir -p "$DEST"
-    for f in "$SRC"/*; do
-        [ -f "$f" ] || continue
-        $SUDO cp -f "$f" "$DEST/"
-    done
-    echo "  $($SUDO ls -1 "$DEST" | wc -l) files staged in /lib/firmware/image"
-else
-    echo "  warning: $SRC not found - install the modem firmware first"
 fi
 
-# -----------------------------------------------------------------------------
-say "verifying tqftpserv knows the vendor paths"
-# grep -a rather than strings: strings lives in binutils, which a rootfs-only
-# build host has no reason to have installed.
-if grep -aq '/readonly/vendor/firmware_mnt/image/' "$ROOT/usr/bin/tqftpserv"; then
-    echo "  OK - tqftpserv accepts /readonly/vendor/firmware_mnt/image/"
-else
-    die "tqftpserv does not know the vendor firmware path; WiFi will not come up"
+apt_options=(
+    -o "Dir::Etc::sourcelist=${work#"$ROOT"}/sources.list"
+    -o Dir::Etc::sourceparts=-
+    -o "Dir::Etc::preferences=${work#"$ROOT"}/preferences"
+    -o Dir::Etc::preferencesparts=-
+    -o Acquire::Retries=3
+    -o Acquire::Languages=none
+    -o APT::Update::Error-Mode=any
+)
+in_root() {
+    chroot "$ROOT" env LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive "$@"
+}
+
+packages=(
+    rmtfs protection-domain-mapper tqftpserv firmware-atheros
+    network-manager wpasupplicant iw rfkill isc-dhcp-client systemd-timesyncd
+    bluez alsa-utils libvulkan1 mesa-vulkan-drivers vulkan-tools
+    docker.io docker-cli containerd runc
+    locales sudo bash-completion pciutils usbutils util-linux-extra
+    curl wget rsync file vim-tiny man-db manpages tree jq htop psmisc lsof
+    ethtool dnsutils iperf3 net-tools tcpdump
+)
+in_root apt-get "${apt_options[@]}" update
+in_root apt-get "${apt_options[@]}" install -y --no-install-recommends "${packages[@]}"
+in_root apt-get "${apt_options[@]}" check
+
+# Build the locale data before selecting the locale for systemd and login.
+if ! grep -Fxq 'zh_CN.UTF-8 UTF-8' "$ROOT/etc/locale.gen"; then
+    printf '\nzh_CN.UTF-8 UTF-8\n' >> "$ROOT/etc/locale.gen"
+fi
+in_root locale-gen
+in_root update-locale --locale-file /etc/locale.conf LANG=zh_CN.UTF-8
+in_root apt-get clean
+
+if ! grep -aq '/readonly/vendor/firmware_mnt/image/' "$ROOT/usr/bin/tqftpserv"; then
+    echo 'error: tqftpserv does not support the modem vendor firmware path' >&2
+    exit 1
 fi
 
-say "rebuilding the ext4 image"
-$SUDO mkdir -p "$ROOT/lib/systemd/system" 2>/dev/null || true
-echo "  rootfs updated; run your image build to produce a flashable image"
+# rmtfs -s starts MPSS once rmtfs is ready to serve its files.
+systemctl --root="$ROOT" enable rmtfs.service pd-mapper.service tqftpserv.service systemd-timesyncd.service

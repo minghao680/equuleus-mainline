@@ -630,11 +630,11 @@ ath10k_snoc 18800000.wifi: firmware ver api 5 features wowlan,mgmt-tx-by-referen
 ath10k_snoc 18800000.wifi: htt-ver 3.73 wmi-op 4 htt-op 3 cal file max-sta 32 hwcrypto 1
 
 $ ip -brief link
-wlan0            UP   2e:0c:c3:8f:a5:ab  <BROADCAST,MULTICAST,UP>
+wlan0            UP   <address>  <BROADCAST,MULTICAST,UP>
 
 $ iw dev wlan0 scan
-BSS 50:33:f0:9c:8d:66  signal: -32.00 dBm  SSID: ...
-BSS 3a:cd:55:90:eb:a4  signal: -63.00 dBm  SSID: ZQU-WebAuth
+BSS <address>  signal: -32.00 dBm  SSID: ...
+BSS <address>  signal: -63.00 dBm  SSID: ...
 ...（扫到 10 个真实网络）
 ```
 

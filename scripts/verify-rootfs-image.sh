@@ -1,128 +1,80 @@
 #!/bin/bash
-# Verify the shipped rootfs image contains what the objective asks for.
-#
-# The first version used "sudo -n test -e $MNT/path" and reported nearly everything
-# missing. That check is unreliable against a loop mount under sudo here - it
-# returned false for paths that plainly exist. Using ls on the parent directory is
-# dependable, so every check now goes through a listing instead.
-set -u
-IMG=${IMG:-$(cd "$(dirname "$0")/.." && pwd)/rootfs.ext4}
-MNT=$(mktemp -d)
+# Inspect the flashable filesystem and run a few arm64 userspace checks.
+set -euo pipefail
 
-sudo -n umount "$MNT" 2>/dev/null || true
-mkdir -p "$MNT"
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+. "$REPO/scripts/lib/sudo.sh"
+IMG=${IMG:-$REPO/out/rootfs.ext4}
+[[ -s $IMG ]] || { echo "error: image missing: $IMG" >&2; exit 1; }
 
-echo "=== 挂载镜像 ==="
-sudo -n mount -o loop,ro "$IMG" "$MNT" 2>/dev/null || { echo "  挂载失败"; exit 1; }
-echo "  OK"
-
-pass=0; fail=0
-
-# Check a path by listing its parent and matching the basename.
-check() {
-    local desc=$1 rel=$2
-    local dir base
-    dir=$(dirname "$rel")
-    base=$(basename "$rel")
-    if sudo -n ls "$MNT/$dir" 2>/dev/null | grep -qx "$base"; then
-        printf '  [OK]   %s\n' "$desc"
-        pass=$((pass + 1))
-    else
-        printf '  [FAIL] %s  (no %s in /%s)\n' "$desc" "$base" "$dir"
-        fail=$((fail + 1))
+mount_dir=$(mktemp -d)
+cleanup() {
+    if mountpoint -q "$mount_dir"; then
+        $SUDO umount "$mount_dir"
     fi
+    rmdir "$mount_dir"
 }
+trap cleanup EXIT
+$SUDO mount -t ext4 -o loop,ro,noload "$IMG" "$mount_dir"
 
-# A .wants entry is a symlink; -e would follow it out of the image, so just look
-# for the name.
-check_link() {
-    local desc=$1 rel=$2
-    local dir base
-    dir=$(dirname "$rel")
-    base=$(basename "$rel")
-    if sudo -n ls "$MNT/$dir" 2>/dev/null | grep -qx "$base"; then
-        printf '  [OK]   %s\n' "$desc"
-        pass=$((pass + 1))
-    else
-        printf '  [FAIL] %s  (no %s in /%s)\n' "$desc" "$base" "$dir"
-        fail=$((fail + 1))
+$SUDO chroot "$mount_dir" /bin/sh -eu <<'EOF'
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C.UTF-8
+
+for pkg in bluez network-manager wpasupplicant firmware-atheros tqftpserv rmtfs \
+    protection-domain-mapper systemd-timesyncd docker.io docker-cli containerd runc \
+    libvulkan1 mesa-vulkan-drivers vulkan-tools locales sudo pciutils usbutils \
+    isc-dhcp-client alsa-utils openssh-server; do
+    if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg")" != installed ]; then
+        echo "error: package not installed: $pkg" >&2
+        exit 1
     fi
-}
+done
 
-echo
-echo "=== 1. nmtui 与 NetworkManager ==="
-check      "nmtui"                    usr/bin/nmtui
-check      "nmcli"                    usr/bin/nmcli
-check      "NetworkManager daemon"    usr/sbin/NetworkManager
-check_link "NetworkManager enabled"   etc/systemd/system/multi-user.target.wants/NetworkManager.service
+for cmd in nmtui nmcli bluetoothctl btmgmt sudo lspci lsusb dhclient iperf3 \
+    aplay amixer vulkaninfo docker dockerd containerd runc resize2fs; do
+    command -v "$cmd" >/dev/null || { echo "error: command missing: $cmd" >&2; exit 1; }
+done
 
-echo
-echo "=== 2. Vulkan ==="
-check "vulkaninfo"          usr/bin/vulkaninfo
-check "Turnip ICD"          usr/share/vulkan/icd.d/freedreno_icd.json
-check "libvulkan"           usr/lib/aarch64-linux-gnu/libvulkan.so.1
+# Execute metadata-only commands to catch missing shared library dependencies.
+/usr/libexec/bluetooth/bluetoothd --version
+NetworkManager --version
+docker --version
+for elf in /usr/bin/rmtfs /usr/bin/tqftpserv /usr/bin/vulkaninfo /usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so; do
+    dependencies=$(ldd "$elf")
+    if printf '%s\n' "$dependencies" | grep -F 'not found'; then
+        echo "error: an ELF dependency of $elf is missing" >&2
+        exit 1
+    fi
+done
 
-echo
-echo "=== 3. Docker ==="
-check      "docker CLI"           usr/bin/docker
-check      "dockerd"              usr/sbin/dockerd
-check_link "docker enabled"       etc/systemd/system/multi-user.target.wants/docker.service
-check_link "containerd enabled"   etc/systemd/system/multi-user.target.wants/containerd.service
-
-echo
-echo "=== 4. 蓝牙 ==="
-check      "bluetooth-addr.sh"     usr/local/sbin/bluetooth-addr.sh
-check      "bluetooth-addr unit"   etc/systemd/system/bluetooth-addr.service
-check_link "bt addr enabled"       etc/systemd/system/multi-user.target.wants/bluetooth-addr.service
-check_link "bluetooth enabled"     etc/systemd/system/multi-user.target.wants/bluetooth.service
-check      "BT firmware patch"     lib/firmware/qca/crbtfw21.tlv
-check      "BT firmware NVM"       lib/firmware/qca/crnv21.bin
-
-echo
-echo "=== 4b. bluez 本体 ==="
-# Without these the firmware, clock fix and QUP wrapper all go to waste: the
-# controller comes up but nothing can drive it, and btmgmt cannot set its address.
-check      "bluetooth.service"     usr/lib/systemd/system/bluetooth.service
-check      "bluetoothctl"          usr/bin/bluetoothctl
-check      "btmgmt"                usr/bin/btmgmt
-check      "hciconfig"             usr/bin/hciconfig
-
-echo
-echo "=== 5. 音频 ==="
-check      "amplifier firmware"    lib/firmware/tas2557_uCDSP.bin
-check      "ADSP start unit"       etc/systemd/system/adsp-start.service
-check_link "ADSP in sysinit"       etc/systemd/system/sysinit.target.wants/adsp-start.service
-
-echo
-echo "=== 6. WiFi 与 rmtfs ==="
-check      "wifi-mac.sh"           usr/local/sbin/wifi-mac.sh
-check_link "wifi-mac enabled"      etc/systemd/system/multi-user.target.wants/wifi-mac.service
-check_link "rmtfs enabled"         etc/systemd/system/multi-user.target.wants/rmtfs.service
-check      "tqftpserv"             usr/bin/tqftpserv
-check      "pd-mapper"             usr/bin/pd-mapper
-
-echo
-echo "=== 7. 不应存在的项 ==="
-if sudo -n ls "$MNT/etc/systemd/system/rmtfs.service.d" 2>/dev/null | grep -qx 'verbose.conf'; then
-    echo "  [FAIL] 临时调试配置 verbose.conf 还在镜像里"
-    fail=$((fail + 1))
-else
-    echo "  [OK]   临时调试配置已清除"
-    pass=$((pass + 1))
+board=/lib/firmware/ath10k/WCN3990/hw1.0/board-2.bin
+if [ ! -s "$board" ] && [ ! -s "$board.xz" ] && [ ! -s "$board.zst" ]; then
+    echo 'error: ath10k WCN3990 board-2.bin is missing' >&2
+    exit 1
 fi
-if sudo -n ls "$MNT/etc/systemd/system/multi-user.target.wants" 2>/dev/null | grep -qx 'modem-start.service'; then
-    echo "  [FAIL] modem-start.service 被启用（与 rmtfs -s 重复）"
-    fail=$((fail + 1))
-else
-    echo "  [OK]   modem-start.service 未启用"
-    pass=$((pass + 1))
+for firmware in qca/crbtfw21.tlv qca/crnv21.bin tas2557_uCDSP.bin \
+    qcom/sdm845/mi8/adsp.mbn image/wlanmdsp.mbn; do
+    [ -s "/lib/firmware/$firmware" ] || { echo "error: missing firmware: $firmware" >&2; exit 1; }
+done
+[ -s /usr/share/vulkan/icd.d/freedreno_icd.json ]
+grep -aq '/readonly/vendor/firmware_mnt/image/' /usr/bin/tqftpserv
+
+[ "$(LC_ALL=zh_CN.UTF-8 locale charmap)" = UTF-8 ]
+locale -a | grep -Fx 'zh_CN.utf8'
+grep -Fx 'LANG=zh_CN.UTF-8' /etc/locale.conf
+awk '$1 !~ /^#/ && $2 == "/" && $3 == "ext4" && $4 ~ /(^|,)x-systemd\.growfs(,|$)/ { ok=1 } END { exit !ok }' /etc/fstab
+[ -x /usr/lib/systemd/systemd-growfs ]
+EOF
+
+for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
+    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh; do
+    if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled "$unit.service"; then
+        echo "error: unit not enabled: $unit.service" >&2
+        exit 1
+    fi
+done
+if $SUDO systemctl --root="$mount_dir" --quiet is-enabled modem-start.service 2>/dev/null; then
+    echo 'error: modem-start.service duplicates rmtfs -s' >&2
+    exit 1
 fi
-
-echo
-echo "=== 8. 统计 ==="
-echo "  已用空间: $(sudo -n du -sh "$MNT" 2>/dev/null | cut -f1)"
-
-sudo -n umount "$MNT"
-
-echo
-echo "=== 汇总: 通过 $pass，失败 $fail ==="
+printf 'Verified packages, firmware, locale, root growth and units in %s\n' "$IMG"
