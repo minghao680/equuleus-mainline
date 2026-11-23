@@ -17,13 +17,22 @@ cleanup() {
 trap cleanup EXIT
 $SUDO mount -t ext4 -o loop,ro,noload "$IMG" "$mount_dir"
 
-$SUDO chroot "$mount_dir" /bin/sh -eu <<'EOF'
+$SUDO chroot "$mount_dir" env VERIFY_RELEASE="${VERIFY_RELEASE:-0}" /bin/sh -eu <<'EOF'
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C.UTF-8
 
-for pkg in bluez network-manager wpasupplicant firmware-atheros tqftpserv rmtfs \
-    protection-domain-mapper systemd-timesyncd docker.io docker-cli containerd runc \
-    libvulkan1 mesa-vulkan-drivers vulkan-tools locales sudo pciutils usbutils \
-    isc-dhcp-client alsa-utils openssh-server; do
+if [ "$VERIFY_RELEASE" = 1 ]; then
+    for file in /etc/ssh/ssh_host_*_key /etc/NetworkManager/system-connections/*; do
+        if [ -f "$file" ] || [ -L "$file" ]; then
+            echo 'error: release image contains a saved network profile or SSH host key' >&2
+            exit 1
+        fi
+    done
+fi
+
+for pkg in bluez network-manager network-manager-l10n wpasupplicant firmware-atheros \
+    wireless-regdb tqftpserv rmtfs protection-domain-mapper systemd-timesyncd \
+    docker.io docker-cli containerd runc libvulkan1 mesa-vulkan-drivers vulkan-tools \
+    locales sudo pciutils usbutils vim isc-dhcp-client alsa-utils alsa-ucm-conf openssh-server; do
     if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg")" != installed ]; then
         echo "error: package not installed: $pkg" >&2
         exit 1
@@ -38,6 +47,11 @@ done
 # Execute metadata-only commands to catch missing shared library dependencies.
 /usr/libexec/bluetooth/bluetoothd --version
 NetworkManager --version
+nm_config=$(NetworkManager --print-config 2>&1)
+if printf '%s\n' "$nm_config" | grep -q '^# WARNING:'; then
+    echo 'error: NetworkManager reported an invalid configuration' >&2
+    exit 1
+fi
 docker --version
 for elf in /usr/bin/rmtfs /usr/bin/tqftpserv /usr/bin/vulkaninfo /usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so; do
     dependencies=$(ldd "$elf")
@@ -67,7 +81,7 @@ awk '$1 !~ /^#/ && $2 == "/" && $3 == "ext4" && $4 ~ /(^|,)x-systemd\.growfs(,|$
 EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
-    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh; do
+    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen; do
     if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled "$unit.service"; then
         echo "error: unit not enabled: $unit.service" >&2
         exit 1

@@ -26,6 +26,7 @@ mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs "$ROOT/run"
 
 work=$(mktemp -d "$ROOT/run/equuleus-apt.XXXXXXXX")
 chmod 0755 "$work"
+mkdir "$work/empty.d"
 policy="$ROOT/usr/sbin/policy-rc.d"
 resolver="$ROOT/etc/resolv.conf"
 restore() {
@@ -81,14 +82,16 @@ Pin-Priority: -1
 EOF
 fi
 
+chroot_work=${work#"$ROOT"}
 apt_options=(
-    -o "Dir::Etc::sourcelist=${work#"$ROOT"}/sources.list"
-    -o Dir::Etc::sourceparts=-
-    -o "Dir::Etc::preferences=${work#"$ROOT"}/preferences"
-    -o Dir::Etc::preferencesparts=-
+    -o "Dir::Etc::sourcelist=$chroot_work/sources.list"
+    -o "Dir::Etc::sourceparts=$chroot_work/empty.d"
+    -o "Dir::Etc::preferences=$chroot_work/preferences"
+    -o "Dir::Etc::preferencesparts=$chroot_work/empty.d"
     -o Acquire::Retries=3
     -o Acquire::Languages=none
     -o APT::Update::Error-Mode=any
+    -o Dpkg::Use-Pty=0
 )
 in_root() {
     chroot "$ROOT" env LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive "$@"
@@ -96,11 +99,12 @@ in_root() {
 
 packages=(
     rmtfs protection-domain-mapper tqftpserv firmware-atheros
-    network-manager wpasupplicant iw rfkill isc-dhcp-client systemd-timesyncd
-    bluez alsa-utils libvulkan1 mesa-vulkan-drivers vulkan-tools
+    network-manager network-manager-l10n wpasupplicant iw rfkill wireless-regdb
+    isc-dhcp-client systemd-timesyncd bluez alsa-utils alsa-ucm-conf
+    libvulkan1 mesa-vulkan-drivers vulkan-tools
     docker.io docker-cli containerd runc
     locales sudo bash-completion pciutils usbutils util-linux-extra
-    curl wget rsync file vim-tiny man-db manpages tree jq htop psmisc lsof
+    curl wget rsync file vim man-db manpages tree jq htop psmisc lsof
     ethtool dnsutils iperf3 net-tools tcpdump
 )
 in_root apt-get "${apt_options[@]}" update

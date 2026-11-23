@@ -2,6 +2,7 @@
 # Build the standard Debian arm64 userland, install device packages and configure systemd.
 # Set BUILD_IMAGE=0 to stage ROM firmware before generating the ext4 image.
 set -euo pipefail
+export LC_ALL=C.UTF-8
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 . "$REPO/scripts/lib/sudo.sh"
@@ -47,7 +48,21 @@ if [[ $new_root == 1 ]]; then
 127.0.1.1 equuleus
 ::1       localhost ip6-localhost ip6-loopback
 EOF
+    # openssh-server creates host keys during bootstrap. Generate each phone's
+    # keys on its own rootfs so installations have separate SSH identities.
+    [[ $(realpath -e -- "$ROOT/etc/ssh") == "$ROOT/etc/ssh" ]] || die 'unexpected /etc/ssh path'
+    $SUDO rm -f -- "$ROOT"/etc/ssh/ssh_host_*_key{,.pub}
 fi
+
+$SUDO install -d "$ROOT/etc/systemd/system/sshd-keygen.service.d"
+$SUDO tee "$ROOT/etc/systemd/system/sshd-keygen.service.d/10-equuleus.conf" >/dev/null <<'EOF'
+[Unit]
+# An empty machine-id is committed at startup and may skip ConditionFirstBoot.
+ConditionFirstBoot=
+ConditionPathIsReadWrite=/etc/ssh
+ConditionPathIsSymbolicLink=!/etc/ssh
+ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
+EOF
 
 # The initramfs mounts userdata. Ask systemd to grow the ext4 filesystem to
 # the size of its backing device after switching to the real root.
@@ -92,7 +107,7 @@ for unit in systemd-networkd.service systemd-networkd.socket systemd-networkd-wa
 done
 $SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.service \
     wifi-mac.service NetworkManager.service bluetooth-addr.service bluetooth.service \
-    ssh.service docker.service containerd.service
+    ssh.service sshd-keygen.service docker.service containerd.service
 $SUDO systemctl --root="$ROOT" set-default multi-user.target
 
 if [[ $BUILD_IMAGE == 1 ]]; then

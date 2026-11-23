@@ -374,7 +374,7 @@ jobs:
           ls -lh out/rootfs.ext4
 
       - name: Verify packages and firmware in the userdata image
-        run: sudo IMG="$PWD/out/rootfs.ext4" scripts/verify-rootfs-image.sh
+        run: sudo VERIFY_RELEASE=1 IMG="$PWD/out/rootfs.ext4" scripts/verify-rootfs-image.sh
 
       - uses: actions/upload-artifact@v4
         with:

@@ -66,6 +66,7 @@ nmcli connection modify PROFILE connection.autoconnect yes connection.autoconnec
 
 SSH is available once the phone has a routable IP and your public key is in
 `authorized_keys` for the login account. Install your key from the USB console.
+The first SSH start generates the phone's host keys.
 
 The rootfs uses Debian's standard package set and preinstalls `sudo`, `lspci`,
 `lsusb`, `man`, `vim`, `curl`, `tcpdump`, `iperf3`, BlueZ, ALSA utilities,
