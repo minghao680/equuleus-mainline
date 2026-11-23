@@ -88,14 +88,18 @@ fetch_pkg trixie libzstd1
 # bluez provides bluetoothd, bluetoothctl and btmgmt. Without it the controller
 # probes and hci0 appears, but nothing can drive it and bluetooth-addr.sh has no
 # btmgmt to set the address with. It is not pulled in by anything else here.
-say "installing bluez"
-fetch_pkg trixie bluez
+# bluez goes through apt like the other multi-package sets: fetch_pkg extracts a
+# single .deb without resolving dependencies, and bluetoothd needs libdw.so.1 and
+# libasound.so.2. Extracting bluez alone produced a bluetoothd that exits with
+# status 127 ("error while loading shared libraries") and a bluetooth.service that
+# restart-loops five times and gives up.
+say "installing bluez with apt"
 
 # NetworkManager provides nmtui and nmcli. systemd-networkd was the previous
 # default but has no interactive interface, and nmtui is how the network gets
 # configured on a device with no working display.
-say "installing NetworkManager and nmtui"
-fetch_pkg trixie network-manager
+# NetworkManager also has a dependency tree (libnm, libndp, and the WiFi supplicant
+# integration); it goes through apt with the rest.
 
 # Docker, NetworkManager and the Vulkan stack each pull in a dependency tree, and
 # fetch_pkg only extracts a single .deb without recording it - docker.io is a
@@ -122,9 +126,21 @@ $SUDO mount -t sysfs sys "$ROOT/sys" 2>/dev/null || true
 
 $SUDO chroot "$ROOT" /bin/sh -c 'apt-get update -qq 2>&1 | tail -2' || true
 
+apt_install bluez
 apt_install docker.io containerd runc
 apt_install network-manager
 apt_install libvulkan1 mesa-vulkan-drivers vulkan-tools
+
+# ath10k needs board-2.bin for WCN3990/hw1.0, and without it the interface never
+# appears:
+#   ath10k_snoc 18800000.wifi: failed to fetch board-2.bin or board.bin
+#     from ath10k/WCN3990/hw1.0
+# firmware-atheros provides it. The stock ROM ships bdwlan.* and bdf_*.bin instead,
+# which are a different format.
+apt_install firmware-atheros
+
+# Nothing pulls in a DHCP client, so wlan0 gets an address only by hand.
+apt_install isc-dhcp-client
 
 $SUDO umount "$ROOT/sys" "$ROOT/proc" "$ROOT/dev" 2>/dev/null || true
 
