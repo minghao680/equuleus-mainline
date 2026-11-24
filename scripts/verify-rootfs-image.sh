@@ -102,17 +102,20 @@ for unit in wifi-mac bluetooth-addr; do
         exit 1
     fi
 done
-EOF
 
 # The Bluetooth address helper is pulled in by bluetooth.service itself, and it
 # must read the address at run time rather than carrying a per-device constant.
+# Only a literal assignment counts; the helper legitimately mentions the all-zero
+# address when rejecting it.
 [ -r /etc/systemd/system/bluetooth.service.d/10-equuleus.conf ]
 grep -q 'After=bluetooth-addr.service' /etc/systemd/system/bluetooth.service.d/10-equuleus.conf
-if grep -qE '[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}' \
-    /usr/local/sbin/bluetooth-addr.sh; then
-    echo 'error: bluetooth-addr.sh contains a hard-coded address' >&2
+grep -q 'bt.mac' /usr/local/sbin/bluetooth-addr.sh
+if grep -qE '(addr=|address=)[0-9a-f]{2}:[0-9a-f]{2}:' /usr/local/sbin/bluetooth-addr.sh; then
+    echo 'error: bluetooth-addr.sh assigns a hard-coded address' >&2
     exit 1
 fi
+
+EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
     tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen audio-defaults; do
