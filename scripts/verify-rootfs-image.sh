@@ -115,6 +115,11 @@ if grep -qE '(addr=|address=)[0-9a-f]{2}:[0-9a-f]{2}:' /usr/local/sbin/bluetooth
     exit 1
 fi
 
+# Wi-Fi power save must be turned off on every connection, or an SSH session pays
+# a per-packet wake-up penalty.
+[ -x /etc/NetworkManager/dispatcher.d/90-wifi-powersave ]
+grep -q 'set power_save off' /etc/NetworkManager/dispatcher.d/90-wifi-powersave
+
 EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \

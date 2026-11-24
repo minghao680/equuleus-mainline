@@ -405,6 +405,21 @@ has been removed.
 
 These were all measured on the device, and each one changed the image.
 
+**Wi-Fi power save makes an interactive session feel broken.** The WCN3990
+associates with power save enabled, so every packet waits for a wake-up. Ping from
+the host averaged about 25 ms with regular spikes over 100 ms, and typing over SSH
+felt sluggish in both directions. The link itself was fine (-38 dBm, 866.7 Mbit/s
+PHY). Turning it off collapses the latency:
+
+```
+before (power save on)    p50 ~25 ms, frequent spikes >100 ms
+after  (power save off)   min 2  p50 5  p90 5  max 7 ms, 0 samples >50 ms
+```
+
+`systemd/NetworkManager-90-wifi-powersave` is a NetworkManager dispatcher script
+that clears power save on every `up`/`dhcp*-change`, so it also covers profiles
+added later with `nmtui` and re-applies after a re-association.
+
 **The root filesystem grows itself.** The shipped image is 4 GiB because it has to
 be downloadable, but `userdata` is 113 GB. The `fstab` entry carries
 `x-systemd.growfs`, so `systemd-growfs-root.service` runs on first boot:

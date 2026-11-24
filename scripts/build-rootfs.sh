@@ -116,6 +116,11 @@ EOF
 # before it manages wlan0 and retain it during scans and association.
 $SUDO install -D -m 0644 "$REPO/config/NetworkManager-equuleus.conf" \
     "$ROOT/etc/NetworkManager/conf.d/20-equuleus.conf"
+# Power save costs a per-packet wake-up penalty that makes an SSH session feel
+# sluggish; the dispatcher turns it off for every Wi-Fi connection.
+$SUDO install -D -m 0755 -o root -g root \
+    "$REPO/systemd/NetworkManager-90-wifi-powersave" \
+    "$ROOT/etc/NetworkManager/dispatcher.d/90-wifi-powersave"
 for unit in systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service networking.service; do
     if $SUDO test -f "$ROOT/usr/lib/systemd/system/$unit"; then
         $SUDO systemctl --root="$ROOT" disable "$unit"

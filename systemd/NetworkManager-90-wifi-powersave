@@ -1,0 +1,36 @@
+#!/bin/sh
+# Turn 802.11 power save off whenever the Wi-Fi interface comes up.
+#
+# The WCN3990 defaults to power save on, and with it enabled every keystroke over
+# SSH pays a per-packet wake-up penalty: host pings averaged ~25 ms with regular
+# spikes above 100 ms, and an interactive session felt sluggish in both
+# directions. With power save off the same measurement is 2-7 ms with no spikes.
+#
+# This runs from the NetworkManager dispatcher rather than a systemd unit so that
+# it covers every connection, including ones created later with nmtui, and so it
+# re-applies after a re-association.
+#
+# $1 is the interface, $2 the event.
+set -eu
+
+IFACE=${1:-}
+EVENT=${2:-}
+
+case "$IFACE" in
+    wlan*) ;;
+    *) exit 0 ;;
+esac
+
+case "$EVENT" in
+    up|dhcp4-change|dhcp6-change) ;;
+    *) exit 0 ;;
+esac
+
+PATH=/usr/sbin:/sbin:/usr/bin:/bin
+export PATH
+
+command -v iw >/dev/null 2>&1 || exit 0
+
+# Keep the interface name from the dispatcher; never take it from user input.
+iw dev "$IFACE" set power_save off >/dev/null 2>&1 || true
+exit 0
