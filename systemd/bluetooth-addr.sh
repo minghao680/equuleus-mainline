@@ -77,15 +77,44 @@ if [ -n "$current" ] && [ "$current" = "$addr" ]; then
     exit 0
 fi
 
-# bluetoothd holds the controller, so hand it back before the address change.
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet bluetooth.service; then
-    systemctl stop bluetooth.service >/dev/null 2>&1 || true
-    sleep 2
+# The controller only accepts an address after it has been opened at least once,
+# and it is bluetoothd that opens it: with bluetoothd never running, btmgmt has no
+# management index at all ("Index list with 0 items") and every public-addr call
+# blocks until it is killed. Starting the daemon powers the controller, stopping it
+# hands the device back, and the address then applies immediately. Measured:
+#
+#   systemctl start bluetooth.service   -> bt active
+#   systemctl stop  bluetooth.service
+#   btmgmt -i hci0 public-addr ...      -> hci0 Set Public Address complete
+#   btmgmt -i hci0 power on             -> hci0 Set Powered complete  -> UP RUNNING
+#
+# bluetoothd exits on its own while the controller is unconfigured, so the start
+# is expected to "fail" from systemd's point of view while still doing the work.
+# Starting the daemon is what opens the controller, and it must actually reach
+# "active" before it is stopped again: stopping too early leaves the controller
+# unpowered, btmgmt then has no management index and every call blocks. The start
+# job itself has to be issued without blocking, otherwise systemd waits for
+# bluetoothd to give up and holds this unit in "activating" for a minute or more.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl start --no-block bluetooth.service >/dev/null 2>&1 || true
+    i=0
+    while [ "$i" -lt 30 ]; do
+        systemctl is-active --quiet bluetooth.service && break
+        i=$((i + 1))
+        sleep 1
+    done
+    # Give the daemon a moment to run its initial power-on after going active.
+    sleep 5
+    systemctl stop --no-block bluetooth.service >/dev/null 2>&1 || true
+    sleep 3
 fi
 
-if ! timeout 8 btmgmt -i "$HCI" public-addr "$addr" 2>&1 | grep -q complete; then
-    # Expected for the first several minutes after boot; the timer comes back.
+if ! timeout 15 btmgmt -i "$HCI" public-addr "$addr" 2>&1 | grep -q complete; then
+    # Expected before the controller has settled; the timer comes back.
     echo '[bt] controller not ready, will retry on the next timer tick'
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl start bluetooth.service >/dev/null 2>&1 || true
+    fi
     exit 0
 fi
 

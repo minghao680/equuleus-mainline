@@ -1,13 +1,14 @@
 [Unit]
 Description=Retry the Bluetooth factory address until the controller accepts it
-Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/bluetooth-handoff.md
 
 [Timer]
-# First attempt well after the controller has settled, then keep trying. The
-# helper exits 0 whether or not it succeeded, so the timer always comes back.
-OnBootSec=10min
-OnUnitActiveSec=10min
-AccuracySec=1min
+# Readiness measured anywhere from ~2 min to ~13 min after boot, so tick often
+# enough to converge quickly, but never retry inside one invocation: a loop keeps
+# the controller from finishing setup, a single attempt after a pause succeeds.
+OnBootSec=2min
+OnUnitActiveSec=3min
+AccuracySec=30s
 Unit=bluetooth-addr.service
 Persistent=false
 

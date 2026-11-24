@@ -172,10 +172,43 @@ up=840s   (manual check from an SSH shell, for measurement) -> hci0 Set Public A
 up=1285s  timer tick -> finished, hci0 BD Address A4:50:46:B3:ED:3C, UP RUNNING, bt active
 ```
 
-So the schedule does converge: the 600 s tick was too early, the address landed by
-840 s, and the following tick saw it in place and started `bluetooth.service`.
-**A tick has not yet been observed landing the address entirely unaided**, because
-a manual call preempted it in that run; a clean cold-boot test is the next step.
+So the schedule does converge, but the ticks themselves almost never land the
+address — they mostly log "controller not ready". Two clean boots with ticks every
+three minutes were still unconfigured at 637 s and 780 s respectively.
+
+### The remaining difference between a manual run and the unit
+
+This is the crux, and it is not yet explained. Run by hand, the following works
+every single time:
+
+```
+systemctl start bluetooth.service     # bluetoothd opens/powers the controller
+sleep 6
+systemctl stop  bluetooth.service
+btmgmt -i hci0 public-addr a4:50:46:b3:ed:3c
+  -> hci0 Set Public Address complete
+btmgmt -i hci0 power on
+  -> hci0 Set Powered complete   -> hciconfig shows UP RUNNING
+```
+
+The same steps issued from inside `bluetooth-addr.sh` do not, even with
+`--no-block` and even while polling until `bluetooth.service` reports `active`.
+The observable difference is `btmgmt info`:
+
+* after a successful manual sequence: the management index exists;
+* inside the unit: `Index list with 0 items`, and each `btmgmt public-addr` blocks
+  until it is killed by `timeout`.
+
+So the controller is only opened when `bluetoothd` runs **from a context that is
+not this unit's**. Candidates the next agent should check: whether `systemctl`
+issued from a service actually performs the start job (it may be queued behind the
+unit itself, or rejected), whether `btmgmt` needs a session/seat that a service
+lacks, or whether the start is happening but the daemon exits before opening the
+device because of how it is signalled.
+
+A direct experiment that settles it: add `logger`/`echo` lines around the
+start/stop inside the unit and compare `systemctl status bluetooth` plus
+`btmgmt info` at each step, from the unit and from an SSH shell on the same boot.
 
 ## 7. What the next agent should try
 
