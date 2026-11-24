@@ -164,17 +164,18 @@ being (re)started late in boot:
 * `systemd/bluetooth-addr.timer` — `OnBootSec=10min`, `OnUnitActiveSec=10min`.
   This is the mechanism that gives the controller quiet time between attempts.
 
-Latest observed behaviour of that design (uptime 803 s):
+Latest observed behaviour of that design:
 
 ```
-timer=active  NEXT in 7min  LAST 2min 45s ago
-[bt] controller not ready, will retry on the next timer tick
-$ btmgmt -i hci0 public-addr ...        # manual, same second
-hci0 Set Public Address complete, options:
+up=600s   timer tick -> [bt] controller not ready, will retry on the next timer tick
+up=840s   (manual check from an SSH shell, for measurement) -> hci0 Set Public Address complete
+up=1285s  timer tick -> finished, hci0 BD Address A4:50:46:B3:ED:3C, UP RUNNING, bt active
 ```
 
-i.e. the timer's 600 s tick was too early, and the controller was ready by 803 s.
-**The 1200 s tick is expected to succeed but has not been observed yet.**
+So the schedule does converge: the 600 s tick was too early, the address landed by
+840 s, and the following tick saw it in place and started `bluetooth.service`.
+**A tick has not yet been observed landing the address entirely unaided**, because
+a manual call preempted it in that run; a clean cold-boot test is the next step.
 
 ## 7. What the next agent should try
 
