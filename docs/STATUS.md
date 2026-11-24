@@ -428,14 +428,22 @@ bounded time for the symlink and falls back to reading the partition table with
 `lsblk`, which does not depend on udev.
 
 **The Bluetooth controller is unconfigured for minutes, not seconds.** `hci0`
-appears within a second and the QCA firmware finishes at 1.9 s, but every
-`btmgmt public-addr` attempt in the first two minutes blocked and timed out; the
-same call returned "complete" instantly at about 4.5 minutes of uptime. Waiting
-for that would hold up boot, so the unit makes a few bounded attempts, exits
-non-zero when the controller is still busy, and systemd retries it with
-`Restart=on-failure`. A run that finds the address already applied exits 0, so the
-retry loop stops. Measured result: `hci0 UP RUNNING`, factory address, and a scan
-finding 28 devices.
+appears within a second and the QCA firmware finishes at 1.9 s, but `btmgmt`
+only accepts a public address much later: a call that still failed at 464 s of
+uptime returned "complete" at 586 s, 616 s and 983 s. Two things matter more than
+the clock:
+
+* bluetoothd must not hold the controller. With it active the call blocks, and
+  stopping it makes the next call succeed immediately.
+* retrying in a loop keeps the controller from ever becoming ready. A loop that
+  attempted every few seconds failed for 900–1000 s straight, while the first
+  attempt after a quiet pause succeeded at once.
+
+So `bluetooth-addr.service` makes exactly one attempt per invocation, and
+`bluetooth-addr.timer` invokes it again ten minutes after boot and every ten
+minutes after that. Nothing is ordered before the boot, so a slow controller can
+never delay it. Measured result once configured: `hci0 UP RUNNING`, factory
+address, and a scan finding 28 devices.
 
 **Audio needs one mixer switch.** Opening `MultiMedia1` failed with
 `Audio open error: Invalid argument` because no backend was enabled:

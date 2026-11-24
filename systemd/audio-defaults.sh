@@ -16,29 +16,26 @@
 set -eu
 
 card=0
-waited=0
-while [ ! -r /proc/asound/card$card/pcm ]; do
-    [ "$waited" -lt 60 ] || { echo 'audio-defaults: no sound card'; exit 0; }
-    waited=$((waited + 1))
-    sleep 1
-done
 
 if ! command -v amixer >/dev/null 2>&1; then
     echo 'audio-defaults: amixer not installed'
     exit 0
 fi
 
-# The card device appears before q6routing registers its mixer controls, and
-# setting a switch that does not exist yet is a silent no-op. Wait for the
-# controls themselves, not just for the card.
+# The card device and the q6routing controls do not appear together: the card
+# registers early, while the routing switches only exist once the ADSP services
+# are up. Setting a switch that is not there yet is a silent no-op, so wait for
+# the control itself rather than for the card (there is no /proc/asound/card0/pcm
+# file; the entries are pcm0p and pcm0c).
 probe="QUAT_MI2S_RX Audio Mixer MultiMedia1"
 waited=0
-while [ "$waited" -lt 60 ]; do
-    if amixer -c "$card" sget "$probe" >/dev/null 2>&1; then
-        break
+until amixer -c "$card" sget "$probe" >/dev/null 2>&1; do
+    if [ "$waited" -ge 180 ]; then
+        echo 'audio-defaults: routing controls never appeared'
+        exit 0
     fi
-    waited=$((waited + 1))
-    sleep 1
+    sleep 2
+    waited=$((waited + 2))
 done
 
 enabled=0
@@ -49,4 +46,4 @@ for fe in 1 2 3 4; do
     fi
 done
 
-echo "audio-defaults: enabled $enabled speaker route(s)"
+echo "audio-defaults: enabled $enabled speaker route(s) after ${waited}s"

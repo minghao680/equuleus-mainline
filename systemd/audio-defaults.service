@@ -10,8 +10,8 @@ Wants=sound.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/audio-defaults.sh
-# Waiting for the card and toggling mixer switches is quick; bound it anyway.
-TimeoutStartSec=90
+# The script waits up to 3 min for q6routing to register its switches.
+TimeoutStartSec=240
 
 [Install]
 WantedBy=multi-user.target

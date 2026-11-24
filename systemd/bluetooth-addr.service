@@ -2,29 +2,24 @@
 Description=Set the Bluetooth controller's factory address
 Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
 # The WCN3990 comes up as HCI_UNCONFIGURED because hci_qca marks its address
-# invalid, and the kernel only lets such a controller be configured through the
-# management interface. Until an address is supplied, every normal open is
-# refused:
+# invalid, so every normal open is refused until userspace supplies one:
 #
 #   hciconfig hci0 up    -> Operation not supported (95)
 #   bluetoothctl show    -> No default controller available
 #
-# The controller is not ready to accept an address until a few minutes after
-# hci0 appears, and waiting for that would hold up boot. Each run makes a few
-# bounded attempts and exits non-zero when the controller is still busy, so
-# systemd retries with Restart= instead of blocking the boot. bluetooth.service
-# is deliberately not ordered after this unit; a successful run starts it.
+# btmgmt only accepts the address many minutes after hci0 appears, and a loop
+# that retries every few seconds keeps the controller from ever getting there:
+# such a loop failed for 900-1000 s on real boots, while a single attempt after a
+# quiet period returned "complete" immediately. This unit therefore makes one
+# attempt per invocation and bluetooth-addr.timer invokes it again every ten
+# minutes. Nothing here is ordered before the boot, so it can never delay it.
 After=local-fs.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/bluetooth-addr.sh
-Restart=on-failure
-RestartSec=20
-# Give up after roughly ten minutes of retries instead of looping forever.
-StartLimitIntervalSec=600
-StartLimitBurst=30
-TimeoutStartSec=60
+# One btmgmt call plus the power-on retries, nothing long-running.
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target

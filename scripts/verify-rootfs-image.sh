@@ -104,6 +104,13 @@ for unit in wifi-mac bluetooth-addr; do
 done
 EOF
 
+# The Bluetooth address needs a retry timer: one attempt at boot is usually too
+# early for this controller.
+if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled bluetooth-addr.timer; then
+    echo 'error: bluetooth-addr.timer is not enabled' >&2
+    exit 1
+fi
+
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
     tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen audio-defaults; do
     if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled "$unit.service"; then

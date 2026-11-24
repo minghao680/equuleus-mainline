@@ -1,24 +1,23 @@
 #!/bin/sh
-# Give the WCN3990 Bluetooth controller its factory address.
+# Give the Bluetooth controller its factory address.
 #
-# Why the order below matters, verified on hardware:
+# The WCN3990 comes up as HCI_UNCONFIGURED because hci_qca marks the address
+# invalid, so every normal open is refused until userspace supplies one:
 #
-# hci_qca sets HCI_QUIRK_INVALID_BDADDR for this controller, so it comes up flagged
-# HCI_UNCONFIGURED. While that flag is set, any normal open is refused:
+#   hciconfig hci0 up    -> Operation not supported (95)
+#   bluetoothctl show    -> No default controller available
 #
-#   hciconfig hci0 up        -> Can't init device hci0: Operation not supported (95)
-#   bluetoothctl show        -> No default controller available
+# Measured behaviour on this device, which shaped this design:
+#   * btmgmt only accepts the address many minutes after hci0 appears.
+#   * A single attempt after a quiet period succeeds; a loop that retries every
+#     few seconds failed for 900-1000 s straight, and btmgmt blocking inside the
+#     loop appears to be what keeps the controller from finishing setup.
+#   * bluetoothd must not be running while the address changes: with it active
+#     the call blocks, and stopping it makes the next call return "complete".
 #
-# The kernel only allows it to be configured through the management interface, which
-# is what btmgmt talks to. `public-addr` is the call that supplies the address and
-# lets the controller become a normal one; `power on` then brings it up.
-#
-#   btmgmt -i hci0 power off      -> "Invalid Index", expected: it is already down
-#   btmgmt -i hci0 public-addr .. -> "Set Public Address complete"
-#   btmgmt -i hci0 power on       -> "Set Powered complete, settings: powered br/edr"
-#
-# The address is six raw bytes in /persist/wlan_bt/bt.mac. Note bt.mac, not wlan.mac:
-# they differ in one nibble.
+# So this makes at most one attempt per invocation, and a timer invokes it again
+# every ten minutes. Nothing here blocks the boot.
+set -eu
 
 PERSIST=/persist
 HCI=hci0
@@ -27,8 +26,6 @@ HCI=hci0
 
 if [ ! -r "$PERSIST/wlan_bt/bt.mac" ]; then
     mkdir -p "$PERSIST"
-    # by-partlabel is created asynchronously by udev; wait for it or read the
-    # partition table instead of skipping the address.
     persist_dev=$(equuleus_persist_partition) || persist_dev=
     if [ -n "${persist_dev:-}" ]; then
         mount -o ro -t ext4 "$persist_dev" "$PERSIST" 2>/dev/null || true
@@ -49,92 +46,58 @@ size=$(wc -c < "$ADDR_FILE" | tr -d ' ')
 if [ "$size" -eq 6 ]; then
     addr=$(od -An -tx1 "$ADDR_FILE" | tr -s ' \n' ' ' | sed 's/^ //;s/ $//;s/ /:/g')
 else
-    raw=$(tr -d ' \r\n' < "$ADDR_FILE")
-    addr=$(echo "$raw" | tr -d ':-' | tr 'A-F' 'a-f' | sed 's/../&:/g; s/:$//')
+    addr=$(tr -d ' \r\n' < "$ADDR_FILE" | sed 's/../&:/g; s/:$//')
 fi
-
-case "$addr" in
-    [0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]) ;;
-    *) echo "[bt] unparsable address from $ADDR_FILE: $addr"; exit 0 ;;
-esac
-
-if [ "$addr" = "00:00:00:00:00:00" ]; then
-    echo "[bt] address file is all zeroes, skipping"
-    exit 0
-fi
+addr=$(printf '%s' "$addr" | tr 'A-F' 'a-f')
+[ "${#addr}" -eq 17 ] || { echo "[bt] unexpected address format: $addr"; exit 0; }
 
 i=0
-while [ "$i" -lt 100 ]; do
-    [ -e "/sys/class/bluetooth/$HCI" ] && break
+while [ ! -e "/sys/class/bluetooth/$HCI" ]; do
     i=$((i + 1))
-    sleep 0.1
+    [ "$i" -lt 60 ] || { echo "[bt] $HCI never appeared"; exit 0; }
+    sleep 0.5
 done
-[ -e "/sys/class/bluetooth/$HCI" ] || { echo "[bt] $HCI never appeared"; exit 0; }
 
 if ! command -v btmgmt >/dev/null 2>&1; then
-    echo "[bt] btmgmt not installed"
+    echo '[bt] btmgmt not installed'
     exit 0
 fi
 
-# Every call is bounded: btmgmt blocks indefinitely if the controller is
-# unresponsive, which would leave this unit stuck in "activating" and hold up boot.
-#
-# The unit retries through systemd, so a run that finds the address already in
-# place must succeed instead of configuring it again and looping.
-# sysfs has no address attribute for hci0 in this kernel, so fall back to hciconfig.
+# sysfs has no address attribute for hci0 in this kernel, so use hciconfig.
 current=$(cat "/sys/class/bluetooth/$HCI/address" 2>/dev/null | tr 'A-F' 'a-f')
 if [ -z "$current" ] && command -v hciconfig >/dev/null 2>&1; then
     current=$(hciconfig "$HCI" 2>/dev/null | sed -n 's/.*BD Address: \([0-9A-Fa-f:]*\).*/\1/p' | tr 'A-F' 'a-f')
 fi
-want=$(printf '%s' "$addr" | tr 'A-F' 'a-f')
-if [ -n "$current" ] && [ "$current" = "$want" ]; then
-    echo "[bt] $HCI already uses $addr"
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl try-restart bluetooth.service >/dev/null 2>&1 || \
-            systemctl start bluetooth.service >/dev/null 2>&1 || true
+
+if [ -n "$current" ] && [ "$current" = "$addr" ]; then
+    # Already applied; make sure the daemon that consumes it is running.
+    if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet bluetooth.service; then
+        systemctl start bluetooth.service >/dev/null 2>&1 || true
     fi
     exit 0
 fi
 
-# The controller is not ready to accept an address for a while after hci0
-# appears: on real boots every attempt during the first two minutes blocked and
-# timed out, while the same call succeeded instantly a few minutes later. So this
-# makes a few bounded attempts and, if they all fail, exits non-zero and lets
-# systemd retry the unit instead of holding up boot.
-set_ok=0
-attempt=0
-while [ "$attempt" -lt 3 ]; do
-    attempt=$((attempt + 1))
-    if timeout 4 btmgmt -i "$HCI" public-addr "$addr" 2>&1 | grep -q complete; then
-        set_ok=1
-        break
-    fi
+# bluetoothd holds the controller, so hand it back before the address change.
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet bluetooth.service; then
+    systemctl stop bluetooth.service >/dev/null 2>&1 || true
     sleep 2
-done
-
-if [ "$set_ok" -ne 1 ]; then
-    echo "[bt] controller not ready yet, asking systemd to retry"
-    exit 1
 fi
 
-# power on can report "Invalid Index" until the management index exists for the
-# newly configured controller, so retry that too. bluetoothd would also power the
-# controller, so this is best effort.
+if ! timeout 8 btmgmt -i "$HCI" public-addr "$addr" 2>&1 | grep -q complete; then
+    # Expected for the first several minutes after boot; the timer comes back.
+    echo '[bt] controller not ready, will retry on the next timer tick'
+    exit 0
+fi
+
 attempt=0
-while [ "$attempt" -lt 5 ]; do
+while [ "$attempt" -lt 10 ]; do
     attempt=$((attempt + 1))
-    out=$(timeout 5 btmgmt -i "$HCI" power on 2>&1 || true)
-    case "$out" in
-        *complete*) break ;;
-    esac
+    timeout 5 btmgmt -i "$HCI" power on >/dev/null 2>&1 && break
     sleep 2
 done
 
 echo "[bt] $HCI configured with $addr"
 
-# bluetooth.service is not ordered after this unit, so start it now that an
-# address exists. Without it bluetoothd gives up on the unconfigured controller.
 if command -v systemctl >/dev/null 2>&1; then
-    systemctl try-restart bluetooth.service >/dev/null 2>&1 || \
-        systemctl start bluetooth.service >/dev/null 2>&1 || true
+    systemctl start bluetooth.service >/dev/null 2>&1 || true
 fi
