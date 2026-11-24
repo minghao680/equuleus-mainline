@@ -778,6 +778,26 @@
 	firmware-name = "qcom/sdm845/mi8/mba.mbn", "qcom/sdm845/mi8/modem.mbn";
 };
 
+/*
+ * IPA (IP Accelerator) is the pipe the modem uses for its data traffic. The
+ * firmware is loaded by the AP and handed to Trust Zone for authentication,
+ * which is the "self" loader mode the other Xiaomi boards already in mainline
+ * use (sdm845-xiaomi-perseus.dts, sdm845-xiaomi-polaris.dts). The reserved
+ * regions ipa_fw_mem and ipa_gsi_mem come from sdm845.dtsi, so only the
+ * firmware path differs per board.
+ *
+ * The stock vendor image ships the firmware as ipa_fws.mdt plus .b00..b04
+ * segments; the driver requests the .mdt and qcom_mdt_load() resolves the
+ * segments by basename, so both must be present at that path.
+ */
+&ipa {
+	memory-region = <&ipa_fw_mem>;
+	firmware-name = "qcom/sdm845/mi8/ipa_fws.mdt";
+	qcom,gsi-loader = "self";
+
+	status = "okay";
+};
+
 &qupv3_id_1 {
 	status = "okay";
 };

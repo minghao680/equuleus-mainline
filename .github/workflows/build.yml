@@ -148,6 +148,15 @@ jobs:
           sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mbn 2>/dev/null || true
           sudo cp /mnt/vendor/firmware/a630_zap.elf gpu-fw/a630_zap.mdt 2>/dev/null || true
           sudo cp /mnt/vendor/firmware/tas2557_uCDSP.bin gpu-fw/ 2>/dev/null || true
+          # IPA is built in as well, so it probes before the root filesystem
+          # exists. The vendor image carries the firmware as an .mdt plus .bNN
+          # segments; the driver requests the .mdt and qcom_mdt_load() resolves
+          # the segments by basename, so all of them must travel together.
+          sudo mkdir -p gpu-fw/sdm845/mi8
+          for f in /mnt/vendor/firmware/ipa_fws.*; do
+            sudo cp "$f" gpu-fw/sdm845/mi8/ 2>/dev/null || true
+          done
+          ls -l gpu-fw/sdm845/mi8/ 2>/dev/null || true
           sudo umount /mnt/vendor
 
           # The Bluetooth patch and NVM live in their own partition, not in
@@ -238,6 +247,9 @@ jobs:
               'lib/firmware/tas2557_uCDSP.bin',
               'lib/firmware/qca/crbtfw21.tlv',
               'lib/firmware/qca/crnv21.bin',
+              # IPA carries the modem's data path and probes from the initramfs.
+              'lib/firmware/qcom/sdm845/mi8/ipa_fws.mdt',
+              'lib/firmware/qcom/sdm845/mi8/ipa_fws.b02',
           ]
           missing = [r for r in required if r not in listing]
           for r in required:

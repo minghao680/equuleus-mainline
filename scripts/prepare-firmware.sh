@@ -107,10 +107,23 @@ for f in a630_zap.elf a630_sqe.fw a630_gmu.bin tas2557_uCDSP.bin; do
             ;;
     esac
 done
-$SUDO umount "$MNT"
+# IPA firmware for the modem data path. The stock vendor image carries it as
+# ipa_fws.mdt plus .bNN segments; the driver requests the .mdt and qcom_mdt_load()
+# pulls the segments from the same directory. Without these the IPA node fails to
+# probe, so mobile data has no path.
+$SUDO mkdir -p "$MIIMG"
+ipa_n=0
+for ipa in $($SUDO find "$MNT" -name 'ipa_fws.*' -type f 2>/dev/null | sort); do
+    $SUDO cp -f "$ipa" "$MIIMG/"
+    ipa_n=$((ipa_n + 1))
+done
+if [ "$ipa_n" -gt 0 ]; then
+    echo "  $ipa_n ipa_fws.* file(s) -> $MIIMG"
+else
+    echo "  warning: no ipa_fws firmware found in $VENDOR"
+fi
 
-# -----------------------------------------------------------------------------
-# The Bluetooth patch and NVM are not in vendor.img; they have their own partition.
+$SUDO umount "$MNT"
 # The controller asks the host for qca/crbtfw21.tlv at 0.75 s, before the root
 # filesystem exists, so these must also go into the initramfs - build-initramfs.sh
 # copies them from the same directory when GPU_FW_DIR points here.

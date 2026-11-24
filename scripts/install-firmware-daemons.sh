@@ -107,6 +107,11 @@ packages=(
     curl wget rsync file vim man-db manpages tree jq htop psmisc lsof
     ethtool dnsutils iperf3 net-tools tcpdump
 
+    # Modem data path. qrtr-tools provides qrtr-ns (the QIPCRTR name service) and
+    # libqmi-utils provides qmicli/qmi-proxy; modemmanager needs both plus the
+    # IPA net port the kernel now exposes. modemmanager pulls polkitd, which its
+    # shipped unit Requires.
+    libqmi-utils qrtr-tools modemmanager
     # Shell, editing and scripting
     bc gawk time git ripgrep fd-find python3-venv screen tmux manpages-zh
     # Network and system diagnostics

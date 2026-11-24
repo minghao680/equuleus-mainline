@@ -33,7 +33,8 @@ for pkg in bluez network-manager network-manager-l10n wpasupplicant firmware-ath
     wireless-regdb tqftpserv rmtfs protection-domain-mapper systemd-timesyncd \
     docker.io docker-cli containerd runc libvulkan1 mesa-vulkan-drivers vulkan-tools \
     locales sudo pciutils usbutils vim isc-dhcp-client alsa-utils alsa-ucm-conf openssh-server \
-    manpages-zh python3-venv glmark2-es2-drm; do
+    manpages-zh python3-venv glmark2-es2-drm \
+    libqmi-utils qrtr-tools modemmanager polkitd; do
     if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg")" != installed ]; then
         echo "error: package not installed: $pkg" >&2
         exit 1
@@ -46,7 +47,8 @@ for cmd in nmtui nmcli bluetoothctl btmgmt sudo dhclient iperf3 \
     ssh curl wget dig nc socat arping tracepath mtr traceroute tcpdump \
     lsblk findmnt fdisk parted gdisk ncdu rsync mkfs.vfat mkfs.exfat mdir \
     tar gzip bzip2 xz zip unzip lz4 zstd pv \
-    man vim bc gawk /usr/bin/time git rg fdfind jq python3 screen tmux glmark2-es2-drm; do
+    man vim bc gawk /usr/bin/time git rg fdfind jq python3 screen tmux glmark2-es2-drm \
+    qmicli qrtr-ns mmcli; do
     command -v "$cmd" >/dev/null || { echo "error: command missing: $cmd" >&2; exit 1; }
 done
 
@@ -115,6 +117,17 @@ if grep -qE '(addr=|address=)[0-9a-f]{2}:[0-9a-f]{2}:' /usr/local/sbin/bluetooth
     exit 1
 fi
 
+# The modem data path needs the IPA firmware next to the other mi8 blobs, and
+# ModemManager must be ordered after the QRTR name service.
+for f in ipa_fws.mdt ipa_fws.b02; do
+    [ -s "/lib/firmware/qcom/sdm845/mi8/$f" ] || {
+        echo "error: missing IPA firmware: $f" >&2
+        exit 1
+    }
+done
+[ -x /usr/bin/qrtr-ns ]
+grep -q 'After=qrtr-ns.service' /etc/systemd/system/ModemManager.service.d/10-equuleus.conf
+
 # Wi-Fi power save must be turned off on every connection, or an SSH session pays
 # a per-packet wake-up penalty.
 [ -x /etc/NetworkManager/dispatcher.d/90-wifi-powersave ]
@@ -123,7 +136,8 @@ grep -q 'set power_save off' /etc/NetworkManager/dispatcher.d/90-wifi-powersave
 EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
-    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen audio-defaults; do
+    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen audio-defaults \
+    qrtr-ns ModemManager; do
     if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled "$unit.service"; then
         echo "error: unit not enabled: $unit.service" >&2
         exit 1

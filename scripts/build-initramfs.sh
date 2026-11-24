@@ -127,6 +127,23 @@ if [ -n "${GPU_FW_DIR:-}" ] && [ -d "$GPU_FW_DIR" ]; then
         done
         break
     done
+
+    # IPA is built in as well, so it probes while the initramfs is still the root
+    # and asks for its firmware before the real root exists. Without these files
+    # the modem data path never comes up. The path must match the device tree's
+    # firmware-name, and qcom_mdt_load() resolves the .bNN segments by basename.
+    for cand in "$GPU_FW_DIR/sdm845/mi8" "$GPU_FW_DIR/../sdm845/mi8" \
+                "$GPU_FW_DIR/qcom/sdm845/mi8"; do
+        [ -d "$cand" ] || continue
+        mkdir -p "$WORK/lib/firmware/qcom/sdm845/mi8"
+        for f in "$cand"/ipa_fws.*; do
+            [ -f "$f" ] || continue
+            cp -f "$f" "$WORK/lib/firmware/qcom/sdm845/mi8/"
+            echo "  qcom/sdm845/mi8/$(basename "$f")"
+            n=$((n + 1))
+        done
+        break
+    done
     [ "$n" -gt 0 ] || echo "  none of the a630 files found in $GPU_FW_DIR"
 else
     echo "  GPU_FW_DIR not set - the GPU will not initialise at boot"

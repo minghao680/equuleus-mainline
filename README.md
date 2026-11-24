@@ -17,6 +17,7 @@ and Samsung EA8074 panel driver in this repository.
 | GPU | Mesa Freedreno FD630 ran glmark2, and Turnip exposed Vulkan 1.3 |
 | Audio | ALSA enumerated playback and capture PCMs. The TAS2557 speaker amplifier loaded its firmware. |
 | Battery and clock | PMI8998 reports charge and voltage. `systemd-timesyncd` synchronizes the system clock once networking is up. |
+| Cellular modem | The modem, QRTR transport and IPA data path are all up; ModemManager creates the modem and reports `sim-missing`. Data and calls still need a SIM card. |
 
 The bring-up notes include measured values and failure logs. [Hardware status](docs/STATUS.md)
 

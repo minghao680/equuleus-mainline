@@ -69,6 +69,7 @@ report "gpu@5000000"            "Adreno 630"
 report "wifi@18800000"          "ath10k"
 report "battery"                "电量计"
 report "charger@1000"           "PMI8998 充电器"
+report "ipa@1e40000"            "IPA，modem 数据通路（rmnet）"
 
 echo
 echo "===== 汇总: 启用 $pass，问题 $fail ====="

@@ -495,6 +495,72 @@ command, while mainline `reboot` performs a hard reset, so a warm reset is the
 likely missing piece. Until that is implemented, fastboot needs Volume Down +
 Power.
 
+## Cellular modem: IPA enabled, and the only blocker is a SIM
+
+The modem has been running for a while (`rmtfs -s` starts it, QMI is reachable over
+QRTR), but ModemManager refused to create a modem object:
+
+```
+[qrtr0/probe] probe step: QMI ... done
+[device qcom-soc] creating modem with plugin 'qcom-soc' and '1' ports
+<wrn> couldn't create modem for device 'qcom-soc': Failed to find a net port in the QMI modem
+```
+
+The missing net port is **IPA** (IP Accelerator), the pipe the modem uses for data.
+`CONFIG_QCOM_IPA=y` was already set, but the `ipa@1e40000` node in `sdm845.dtsi` is
+`status = "disabled"` and the board tree never enabled it.
+
+Enabling it is a small device-tree change. The reserved regions `ipa_fw_mem`
+(64 KiB) and `ipa_gsi_mem` (20 KiB) are already in `sdm845.dtsi`, and the Xiaomi
+boards in mainline (`sdm845-xiaomi-perseus.dts`, `sdm845-xiaomi-polaris.dts`) show
+the exact shape:
+
+```dts
+&ipa {
+	memory-region = <&ipa_fw_mem>;
+	firmware-name = "qcom/sdm845/mi8/ipa_fws.mdt";
+	qcom,gsi-loader = "self";
+
+	status = "okay";
+};
+```
+
+The firmware is proprietary and lives in the stock ROM's **vendor.img**
+`/firmware/` directory as `ipa_fws.mdt` plus `.b00..b04` segments — not in the
+modem partition, and there is no separate `ipa_fws` partition on this device.
+`scripts/prepare-firmware.sh` extracts it and `scripts/build-initramfs.sh` puts it
+in the initramfs, because IPA is built in and probes before the real root exists.
+
+Measured after flashing the new boot image:
+
+```
+ipa 1e40000.ipa: IPA driver initialized
+ipa 1e40000.ipa: IPA driver setup completed successfully
+ipa 1e40000.ipa: received modem starting event
+ipa 1e40000.ipa: received modem running event
+
+$ ip -br link | grep rmnet
+rmnet_ipa0       DOWN     <>
+
+$ mmcli -L
+    /org/freedesktop/ModemManager1/Modem/0 [QUALCOMM INCORPORATED] 0
+
+$ mmcli -m 0
+  Hardware | manufacturer: QUALCOMM INCORPORATED
+           |    drivers: rpmsg_ctrl, ipa, qrtr
+  Status   |    state: failed
+           |    failed reason: sim-missing
+```
+
+So the chain now reaches "modem created by ModemManager" and stops only at
+`sim-missing`: the card slots report `error: no-atr-received`, no network is
+registered and the signal is -128 dBm.
+
+Both units come from the Debian packages (`qrtr-ns.service` from `qrtr-tools`,
+`ModemManager.service` from `modemmanager`, which pulls `polkitd`);
+`systemd/ModemManager-10-equuleus.conf` only adds the `Wants=`/`After=` ordering
+after `qrtr-ns`, since the shipped unit orders after polkit alone.
+
 ## Next steps
 
 1. **Touch.** The ST FTS5 node and its `avdd`/`vdd` rails are not enabled yet.
