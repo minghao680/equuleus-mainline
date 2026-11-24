@@ -178,37 +178,56 @@ three minutes were still unconfigured at 637 s and 780 s respectively.
 
 ### The remaining difference between a manual run and the unit
 
-This is the crux, and it is not yet explained. Run by hand, the following works
-every single time:
+**This is now measured, and it is the unit context itself.** The same script, run
+in the same second on the same boot, behaves differently depending only on how it
+is launched:
+
+| Launch context | `btmgmt -i hci0 public-addr` | Result |
+|---|---|---|
+| `systemd-run --unit=... --wait` | blocked, killed at the 20 s timeout | `hci0` stays `DOWN RAW` |
+| plain process in the serial shell | returned `complete` in ~2 s | `hci0 UP RUNNING` |
 
 ```
-systemctl start bluetooth.service     # bluetoothd opens/powers the controller
-sleep 6
-systemctl stop  bluetooth.service
-btmgmt -i hci0 public-addr a4:50:46:b3:ed:3c
-  -> hci0 Set Public Address complete
-btmgmt -i hci0 power on
-  -> hci0 Set Powered complete   -> hciconfig shows UP RUNNING
+=== A) unit context (systemd-run --unit) ===
+13:36:26 target=a4:50:46:b3:ed:3c
+13:36:35 public-addr (no prior inspection):
+13:36:57 power on:
+13:37:10 state:  DOWN RAW
+=== C) plain shell in this session ===
+13:37:10 target=a4:50:46:b3:ed:3c
+13:37:19 public-addr (no prior inspection):
+13:37:21 power on:
+13:37:24 state:  UP RUNNING
 ```
 
-The same steps issued from inside `bluetooth-addr.sh` do not, even with
-`--no-block` and even while polling until `bluetooth.service` reports `active`.
-The observable difference is `btmgmt info`:
+The earlier timing and ordering observations are real but secondary. The address
+call only completes from a process that is **not inside a systemd unit**; inside
+one, `btmgmt` blocks on the management socket until `timeout` kills it. That is
+why every timer tick logs "controller not ready" however late it fires, and why a
+loop of ticks never converges: the process context, not the clock, decides.
 
-* after a successful manual sequence: the management index exists;
-* inside the unit: `Index list with 0 items`, and each `btmgmt public-addr` blocks
-  until it is killed by `timeout`.
+First experiment for the next agent — the whole problem reduces to this:
 
-So the controller is only opened when `bluetoothd` runs **from a context that is
-not this unit's**. Candidates the next agent should check: whether `systemctl`
-issued from a service actually performs the start job (it may be queued behind the
-unit itself, or rejected), whether `btmgmt` needs a session/seat that a service
-lacks, or whether the start is happening but the daemon exits before opening the
-device because of how it is signalled.
+```
+systemd-run --unit=probe --wait /run/bt-clean.sh   # blocks
+/run/bt-clean.sh                                    # succeeds, same minute
+```
 
-A direct experiment that settles it: add `logger`/`echo` lines around the
-start/stop inside the unit and compare `systemctl status bluetooth` plus
-`btmgmt info` at each step, from the unit and from an SSH shell on the same boot.
+Then bisect unit properties until a unit behaves like the shell:
+
+```
+systemd-run --scope --wait /run/bt-clean.sh        # stays in the caller's session
+systemd-run --unit=probe --wait --property=Type=simple \
+    --property=Delegate=yes --property=PrivateDevices=no /run/bt-clean.sh
+```
+
+If `--scope` succeeds, the difference is cgroup/session placement, and the fix is
+either to run the retry outside a unit or to stop doing this in userspace.
+
+The robust way out, given this result, is **kernel-side configuration**: let
+`hci_qca` take the address at probe time from a device-tree property or from the
+`persist` partition, so no userspace process ever has to issue the management
+command. That is the direction I would pursue next.
 
 ## 7. What the next agent should try
 
