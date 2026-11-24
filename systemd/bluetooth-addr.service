@@ -1,25 +1,23 @@
 [Unit]
 Description=Set the Bluetooth controller's factory address
-Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
-# The WCN3990 comes up as HCI_UNCONFIGURED because hci_qca marks its address
-# invalid, so every normal open is refused until userspace supplies one:
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/bluetooth-handoff.md
+# Single owner for the controller address. bluetooth.service pulls this in with
+# Wants=/After= (see the drop-in), so the daemon never starts before an address
+# exists and this unit never drives the daemon itself.
 #
-#   hciconfig hci0 up    -> Operation not supported (95)
-#   bluetoothctl show    -> No default controller available
-#
-# btmgmt only accepts the address many minutes after hci0 appears, and a loop
-# that retries every few seconds keeps the controller from ever getting there:
-# such a loop failed for 900-1000 s on real boots, while a single attempt after a
-# quiet period returned "complete" immediately. This unit therefore makes one
-# attempt per invocation and bluetooth-addr.timer invokes it again every ten
-# minutes. Nothing here is ordered before the boot, so it can never delay it.
+# Readiness is decided by the management interface, not by elapsed time: an
+# HCI_UNCONFIGURED controller does not appear in `btmgmt info`, but it does
+# appear in `btmgmt unconf-index`, which the helper polls read-only.
 After=local-fs.target
+Before=bluetooth.service
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/local/sbin/bluetooth-addr.sh
-# One btmgmt call plus the power-on retries, nothing long-running.
-TimeoutStartSec=120
+# The helper waits up to a minute for hci0 and two for the mgmt interface, then
+# makes one bounded write.
+TimeoutStartSec=240
 
 [Install]
 WantedBy=multi-user.target

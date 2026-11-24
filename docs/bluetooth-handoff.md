@@ -1,14 +1,23 @@
-# Bluetooth handoff: the WCN3990 will not take its factory address on time
+# Bluetooth handoff: the WCN3990 factory address (solved: btmgmt stdin/epoll)
 
 Scope: one feature, one problem. Everything here is about getting Bluetooth up on
 the Xiaomi Mi 8 Pro (`equuleus`, SDM845) under mainline Linux, from a cold boot,
 with no manual step. Display, Wi-Fi, audio and charging are out of scope except
 where they share the combo chip or the boot ordering.
 
-Status at the time of writing: **the controller works, but it does not come up by
-itself reliably.** Configuring it by hand always works once the controller has
-settled. Automating that has failed so far for a reason that is not yet
-identified.
+Status: **resolved.** Bluetooth comes up by itself on a cold boot. The blocker was
+not the controller at all: `btmgmt` puts stdin into an epoll set, `epoll` rejects
+`/dev/null` with `EPERM`, and the unhandled failure made every unit-context attempt
+hang silently. Feed the command a pipe and it completes in milliseconds. See
+section 11 for the trace, the fix and three accepted cold boots.
+
+> **Resolved - read section 11 first.** The multi-minute "hardware readiness" was
+> an artefact of `btmgmt` blocking on a non-pollable stdin inside systemd units.
+> The address is now written from `persist` at run time with one bounded
+> `public-addr` call whose stdin is a pipe: three cold boots reached
+> `UP RUNNING` with the factory address about 106 s after power-on. Section 10's
+> source review is still worth reading: it is what ruled out the DT-free options
+> and produced the readiness-signal advice that section 11 then corrected.
 
 ---
 
@@ -299,3 +308,181 @@ Practical traps when debugging this device:
 | `systemd/persist-part.sh` | udev-independent `persist` lookup (shared with Wi-Fi MAC) |
 | `docs/bluetooth-complete.md` | earlier write-up: UART pinmux root cause and the manual procedure |
 | `docs/bluetooth-baud-analysis.md`, `docs/bluetooth-clock-not-effective.md` | two rejected theories kept for the record |
+
+---
+
+## 10. Source review (2026-11-24): use the existing DT address path
+
+Reviewer: another agent, reviewing the kernel tree and the installed units only.
+No device-side change was made.
+
+### 10.1 The "wait 8-10 minutes for the WCN3990" model is not supported
+
+The relevant kernel sequence is deterministic:
+
+* `hci_register_dev()` sets `HCI_SETUP` and queues `hdev->power_on` itself
+  (`net/bluetooth/hci_core.c:2585`, `:2641`, `:2672`). bluetoothd is not needed
+  to trigger the first setup.
+* The serdev setup callback reaches `hu->proto->setup`, hence `qca_setup()`
+  (`drivers/bluetooth/hci_serdev.c:178`, `:213-214`).
+* Therefore a late `setting up wcn399x` / `QCA setup on UART` message records an
+  HCI open/reopen. It does **not** establish an eight-minute controller settling
+  delay. Userspace service starts/stops and retries are sufficient to explain
+  those late messages.
+
+Also, plain `btmgmt info` reads the normal index list. An unconfigured controller
+is not diagnosed by `Index list with 0 items`; inspect `btmgmt unconf-index` (or
+`btmgmt ext-index`) before concluding that setup has not completed.
+
+### 10.2 `local-bd-address` is already implemented end to end
+
+Section 7 item 4's claim that this needs "a driver change plus a DT binding" is
+incorrect for this tree:
+
+1. QCA marks the controller for a firmware-node supplied address in
+   `qca_check_bdaddr()` (`drivers/bluetooth/btqca.c:700`, quirk set at `:725`).
+2. Bluetooth core reads `local-bd-address` in
+   `hci_dev_get_bd_addr_from_property()` (`net/bluetooth/hci_sync.c:3603`,
+   property read at `:3609`).
+3. During setup it invokes the QCA `set_bdaddr` callback; success clears the
+   invalid-address condition (`hci_sync.c:5053-5055`). QCA's write callback is
+   `qca_set_bdaddr()` (`drivers/bluetooth/btqca.c:1021`).
+4. The standard binding already exists
+   (`Documentation/devicetree/bindings/net/bluetooth/bluetooth-controller.yaml:18`).
+
+For the address documented above, the minimal DTS addition inside the existing
+`bluetooth { ... }` node is:
+
+```dts
+	/* A4:50:46:B3:ED:3C, stored least-significant byte first. */
+	local-bd-address = [3c ed b3 46 50 a4];
+```
+
+The byte order is specified by the binding at lines 23-25. Do **not** add
+`qcom,local-bd-address-broken`: that requests another byte swap and would reverse
+the address again.
+
+This is the preferred experiment for this single-device image: one DTS property,
+no timer, no nested `systemctl`, and no userspace power/address loop. Keep the
+per-device value in a generated/local include if the public DTS must remain
+generic; do not commit every device's factory address into a shared board DTS.
+
+Expected result on a cold boot: QCA firmware setup completes, the kernel writes
+the address during setup, and hci0 becomes a normal configured controller without
+`bluetooth-addr.timer` ever running.
+
+### 10.3 The current userspace automation is not a clean baseline
+
+* The repository `bluetooth-addr.service` has only `After=local-fs.target`; it
+  lacks `Before=bluetooth.service`, while `build-rootfs.sh` enables both units.
+* The repository script then starts, stops and restarts `bluetooth.service` from
+  inside its own oneshot. That makes daemon lifecycle and HCI open/close part of
+  every measurement, so "retrying prevents readiness" is not an isolated hardware
+  observation.
+* The installed rootfs is not running the same design: its unit still has
+  `Before=bluetooth.service`, `RemainAfterExit=yes`, `TimeoutStartSec=40`, and a
+  `persist` condition, and its script is the older 2.9 kB version. The repository
+  script is 5.2 kB. Device observations must name the exact unit/script version.
+
+Do not tune the 2/3/10-minute timers until this is made reproducible.
+
+### 10.4 If a generic userspace solution is required instead
+
+Use a single owner and a real readiness signal:
+
+1. Remove the timer and every `systemctl start/stop bluetooth.service` from the
+   address helper. Let `bluetooth.service` alone pull in the helper with
+   `Wants=bluetooth-addr.service` and `After=bluetooth-addr.service`.
+2. Wait with a bounded, read-only poll of `btmgmt unconf-index` or
+   `btmgmt ext-index`; sysfs `hci0` appearing is earlier than completed QCA setup.
+3. Issue exactly one bounded `btmgmt public-addr`. Do not precede it with
+   `power off` and do not loop `power on`: after a successful public-address
+   change the kernel already queues `hdev->power_on` (`net/bluetooth/mgmt.c:8123`,
+   `:8167`).
+4. Return nonzero on a real failure so systemd reports it instead of silently
+   declaring a skipped/failed configuration successful.
+
+### 10.5 Minimal decision test
+
+On the next cold boot, capture only:
+
+```sh
+btmgmt unconf-index
+btmgmt ext-index
+systemd-analyze critical-chain bluetooth.service bluetooth-addr.service
+journalctl -b -u bluetooth.service -u bluetooth-addr.service --no-pager
+dmesg | grep -iE 'Bluetooth: hci0|qca'
+```
+
+Then try the DTS property above as the single changed variable. Acceptance is
+three cold boots with the factory address, `UP RUNNING`, and a successful scan,
+with both `bluetooth-addr.service` and `bluetooth-addr.timer` disabled. If that
+passes, delete the timer-based machinery rather than preserving it as a fallback.
+
+---
+
+## 11. Resolved: the unit hangs on stdin, not on the controller
+
+The blocker was not hardware readiness, not ordering, and not the management
+interface. It was **`btmgmt` putting stdin into its epoll set**.
+
+`strace` on the same command, same second, same boot, shows the only difference:
+
+```
+UNIT  (stdin is /dev/null):
+  bind(4, {AF_BLUETOOTH, hci_dev=htobs(65535), HCI_CHANNEL_CONTROL}, 6) = 0
+  epoll_ctl(3, EPOLL_CTL_ADD, 0, ...) = -1 EPERM
+
+SHELL (stdin is the serial tty):
+  bind(4, {AF_BLUETOOTH, hci_dev=htobs(65535), HCI_CHANNEL_CONTROL}, 6) = 0
+  epoll_ctl(3, EPOLL_CTL_ADD, 0, ...) = 0
+```
+
+`epoll` refuses regular files and `/dev/null` (EPERM). `btmgmt` does not handle
+that failure, so its main loop waits forever and the process is eventually killed
+by `timeout` with **no output at all** — which is exactly the "controller is not
+ready" symptom. From a serial console stdin is a tty, so the call completes in
+milliseconds.
+
+This also explains the earlier confusions: every "it works after a few minutes"
+observation was a run whose stdin happened to be pollable, and the loops that
+"never converged" were runs whose stdin was `/dev/null`. Nothing about the
+WCN3990 needed eight minutes.
+
+Making stdin a pipe fixes it inside a unit:
+
+```sh
+{ sleep 30; } | timeout 20 btmgmt -i hci0 public-addr "$addr"
+```
+
+`/dev/zero` was tested as well and still fails; a pipe is required.
+
+### Final design
+
+* `systemd/bluetooth-addr.sh` reads the address from the read-only `persist`
+  partition at run time — no per-device value in any image — waits for `hci0`,
+  then makes **one** bounded `public-addr` call with stdin fed from a pipe. No
+  `power off`, no `power on` loop, no nested `systemctl`, no timer.
+* `systemd/bluetooth-addr.service` is a plain oneshot ordered `Before=bluetooth.service`.
+* `systemd/bluetooth.service.d-10-equuleus.conf` makes `bluetooth.service` pull the
+  helper in with `Wants=` plus `After=`, which is the single-owner arrangement
+  suggested in section 10.4.
+* `systemd/bluetooth-addr.timer` is **deleted**.
+
+### Acceptance: three cold boots, timer absent
+
+```
+boot 1  up=106s  addr=A4:50:46:B3:ED:3C  state=UP RUNNING  acc=success  scan=33
+boot 2  up=106s  addr=A4:50:46:B3:ED:3C  state=UP RUNNING  acc=success  scan=45
+boot 3  up=106s  addr=A4:50:46:B3:ED:3C  state=UP RUNNING  acc=success  scan=58
+```
+
+`systemd-analyze critical-chain` shows the whole cost is 30 s:
+
+```
+bluetooth.service +87ms
+└─bluetooth-addr.service @17.692s +30.062s
+```
+
+So Bluetooth is configured 106 s after power-on with no manual step, and the
+`local-bd-address` device-tree route is **not** needed for this device.

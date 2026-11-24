@@ -104,10 +104,13 @@ for unit in wifi-mac bluetooth-addr; do
 done
 EOF
 
-# The Bluetooth address needs a retry timer: one attempt at boot is usually too
-# early for this controller.
-if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled bluetooth-addr.timer; then
-    echo 'error: bluetooth-addr.timer is not enabled' >&2
+# The Bluetooth address helper is pulled in by bluetooth.service itself, and it
+# must read the address at run time rather than carrying a per-device constant.
+[ -r /etc/systemd/system/bluetooth.service.d/10-equuleus.conf ]
+grep -q 'After=bluetooth-addr.service' /etc/systemd/system/bluetooth.service.d/10-equuleus.conf
+if grep -qE '[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}' \
+    /usr/local/sbin/bluetooth-addr.sh; then
+    echo 'error: bluetooth-addr.sh contains a hard-coded address' >&2
     exit 1
 fi
 

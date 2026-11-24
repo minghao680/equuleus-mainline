@@ -92,8 +92,9 @@ EOF
 for unit in adsp-start wifi-mac bluetooth-addr audio-defaults; do
     $SUDO install -m 0644 "$REPO/systemd/$unit.service" "$ROOT/etc/systemd/system/$unit.service"
 done
-$SUDO install -m 0644 "$REPO/systemd/bluetooth-addr.timer" \
-    "$ROOT/etc/systemd/system/bluetooth-addr.timer"
+# bluetooth.service must pull the address helper in, not the other way round.
+$SUDO install -D -m 0644 "$REPO/systemd/bluetooth.service.d-10-equuleus.conf" \
+    "$ROOT/etc/systemd/system/bluetooth.service.d/10-equuleus.conf"
 for helper in wifi-mac bluetooth-addr net-stability audio-defaults; do
     $SUDO install -m 0755 "$REPO/systemd/$helper.sh" "$ROOT/usr/local/sbin/$helper.sh"
 done
@@ -121,7 +122,7 @@ for unit in systemd-networkd.service systemd-networkd.socket systemd-networkd-wa
     fi
 done
 $SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.service \
-    wifi-mac.service NetworkManager.service bluetooth-addr.service bluetooth-addr.timer \
+    wifi-mac.service NetworkManager.service bluetooth-addr.service \
     bluetooth.service \
     audio-defaults.service ssh.service sshd-keygen.service docker.service containerd.service
 $SUDO systemctl --root="$ROOT" set-default multi-user.target
