@@ -401,16 +401,84 @@ The packaged unit is used unmodified:
 `-P` serves the persist partition. A verbose drop-in was used during bring-up and
 has been removed.
 
+## Field notes from the v0.6.x images
+
+These were all measured on the device, and each one changed the image.
+
+**The root filesystem grows itself.** The shipped image is 4 GiB because it has to
+be downloadable, but `userdata` is 113 GB. The `fstab` entry carries
+`x-systemd.growfs`, so `systemd-growfs-root.service` runs on first boot:
+
+```
+$ findmnt -no SOURCE,FSTYPE,SIZE,AVAIL /
+/dev/sda21 ext4 111.2G 109.8G
+```
+
+**The factory MAC needs the persist partition, and persist can appear late.**
+`/dev/disk/by-partlabel/persist` is created by udev, and one boot skipped the
+address unit outright:
+
+```
+wifi-mac.service - skipped, unmet condition check
+  ConditionPathExists=/dev/disk/by-partlabel/persist
+```
+
+The controller then used a random address. `systemd/persist-part.sh` now waits a
+bounded time for the symlink and falls back to reading the partition table with
+`lsblk`, which does not depend on udev.
+
+**The Bluetooth controller is unconfigured for minutes, not seconds.** `hci0`
+appears within a second and the QCA firmware finishes at 1.9 s, but every
+`btmgmt public-addr` attempt in the first two minutes blocked and timed out; the
+same call returned "complete" instantly at about 4.5 minutes of uptime. Waiting
+for that would hold up boot, so the unit makes a few bounded attempts, exits
+non-zero when the controller is still busy, and systemd retries it with
+`Restart=on-failure`. A run that finds the address already applied exits 0, so the
+retry loop stops. Measured result: `hci0 UP RUNNING`, factory address, and a scan
+finding 28 devices.
+
+**Audio needs one mixer switch.** Opening `MultiMedia1` failed with
+`Audio open error: Invalid argument` because no backend was enabled:
+
+```
+MultiMedia1: ASoC: no backend DAIs enabled for MultiMedia1,
+  possibly missing ALSA mixer-based routing or UCM profile
+```
+
+Turning on `QUAT_MI2S_RX Audio Mixer MultiMedia1` routes playback to the TAS2557
+speaker amplifier. `audio-defaults.service` does that at boot, and it has to wait
+for the *control* to exist rather than for the card: setting a switch that q6routing
+has not registered yet is a silent no-op. The SLIMBUS backend must stay off;
+enabling it makes prepare fail with `-EINVAL` and silences the speaker path.
+
+```
+$ aplay -D plughw:0,0 tone.wav
+Playing WAVE: Signed 16 bit Little Endian, Rate 48000 Hz, Stereo
+tas2557: Enable: 1 -> load startup sequence -> load unmute sequence
+```
+
+**Charging depends on the cable, not on the driver.** With the phone plugged into
+a PC's USB-A port the charger reports `online=1` and the pack charges. A wall
+charger that presents a Type-C source reported `online=0` and `VOLTAGE_NOW=0`,
+with no USB event in `dmesg` at all: there is no Type-C/PD negotiation in this
+kernel (`/sys/class/typec` does not exist), so a C-to-C PD charger never enables
+VBUS. `usb_type` reports `[Unknown] SDP DCP CDP`, which is BC1.2 only. Use a
+USB-A charger with an A-to-C cable.
+
+**`reboot bootloader` still does not reach fastboot.** The IMEM driver loads and
+writes `0x77665500` to IMEM +0x65c, and the phone does reboot — but ABL boots Linux
+again. The vendor implementation uses `PON_POWER_OFF_WARM_RESET` for a bootloader
+command, while mainline `reboot` performs a hard reset, so a warm reset is the
+likely missing piece. Until that is implemented, fastboot needs Volume Down +
+Power.
+
 ## Next steps
 
-1. **Grow the root filesystem.** The image is 4 GB inside a 113 GB partition;
-   `resize2fs /dev/sda21` (or `systemd-growfs`, enabled by the `x-systemd.growfs`
-   mount option) reclaims the rest.
-2. **Networking.** `systemd-networkd` is enabled but there is no link yet. USB
-   NCM/RNDIS in the initramfs would give the phone an IP over the same cable that
-   already carries the console, which is the natural way to get `ssh` access.
-3. **Touch.** The ST FTS5 node and its `avdd`/`vdd` rails are not enabled yet.
-4. **Charging / fuel gauge.** PMI8998 is present but not configured.
+1. **Touch.** The ST FTS5 node and its `avdd`/`vdd` rails are not enabled yet.
+2. **Warm reset for `reboot bootloader`.** Implementing the PON warm-reset path may
+   be what makes the IMEM reason stick.
+3. **Type-C/PD detection.** Until a Type-C driver exists, document the USB-A
+   requirement rather than implying any charger works.
 
 ## How this was debugged without a UART
 

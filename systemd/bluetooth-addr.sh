@@ -76,13 +76,65 @@ if ! command -v btmgmt >/dev/null 2>&1; then
     exit 0
 fi
 
-# Every call is bounded: btmgmt blocks indefinitely if the controller is unresponsive,
-# which would leave this unit stuck in "activating" and hold up the boot.
-timeout 5 btmgmt -i "$HCI" power off >/dev/null 2>&1 || true
-timeout 10 btmgmt -i "$HCI" public-addr "$addr" 2>&1 | grep -q complete || {
-    echo "[bt] could not set the address on $HCI"
+# Every call is bounded: btmgmt blocks indefinitely if the controller is
+# unresponsive, which would leave this unit stuck in "activating" and hold up boot.
+#
+# The unit retries through systemd, so a run that finds the address already in
+# place must succeed instead of configuring it again and looping.
+# sysfs has no address attribute for hci0 in this kernel, so fall back to hciconfig.
+current=$(cat "/sys/class/bluetooth/$HCI/address" 2>/dev/null | tr 'A-F' 'a-f')
+if [ -z "$current" ] && command -v hciconfig >/dev/null 2>&1; then
+    current=$(hciconfig "$HCI" 2>/dev/null | sed -n 's/.*BD Address: \([0-9A-Fa-f:]*\).*/\1/p' | tr 'A-F' 'a-f')
+fi
+want=$(printf '%s' "$addr" | tr 'A-F' 'a-f')
+if [ -n "$current" ] && [ "$current" = "$want" ]; then
+    echo "[bt] $HCI already uses $addr"
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl try-restart bluetooth.service >/dev/null 2>&1 || \
+            systemctl start bluetooth.service >/dev/null 2>&1 || true
+    fi
     exit 0
-}
-timeout 10 btmgmt -i "$HCI" power on >/dev/null 2>&1 || true
+fi
+
+# The controller is not ready to accept an address for a while after hci0
+# appears: on real boots every attempt during the first two minutes blocked and
+# timed out, while the same call succeeded instantly a few minutes later. So this
+# makes a few bounded attempts and, if they all fail, exits non-zero and lets
+# systemd retry the unit instead of holding up boot.
+set_ok=0
+attempt=0
+while [ "$attempt" -lt 3 ]; do
+    attempt=$((attempt + 1))
+    if timeout 4 btmgmt -i "$HCI" public-addr "$addr" 2>&1 | grep -q complete; then
+        set_ok=1
+        break
+    fi
+    sleep 2
+done
+
+if [ "$set_ok" -ne 1 ]; then
+    echo "[bt] controller not ready yet, asking systemd to retry"
+    exit 1
+fi
+
+# power on can report "Invalid Index" until the management index exists for the
+# newly configured controller, so retry that too. bluetoothd would also power the
+# controller, so this is best effort.
+attempt=0
+while [ "$attempt" -lt 5 ]; do
+    attempt=$((attempt + 1))
+    out=$(timeout 5 btmgmt -i "$HCI" power on 2>&1 || true)
+    case "$out" in
+        *complete*) break ;;
+    esac
+    sleep 2
+done
 
 echo "[bt] $HCI configured with $addr"
+
+# bluetooth.service is not ordered after this unit, so start it now that an
+# address exists. Without it bluetoothd gives up on the unconfigured controller.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl try-restart bluetooth.service >/dev/null 2>&1 || \
+        systemctl start bluetooth.service >/dev/null 2>&1 || true
+fi

@@ -89,14 +89,25 @@ Type=idle
 EOF
 
 # ADSP uses firmware on the real root. The packaged rmtfs unit owns MPSS startup.
-for unit in adsp-start wifi-mac bluetooth-addr; do
+for unit in adsp-start wifi-mac bluetooth-addr audio-defaults; do
     $SUDO install -m 0644 "$REPO/systemd/$unit.service" "$ROOT/etc/systemd/system/$unit.service"
 done
-for helper in wifi-mac bluetooth-addr net-stability; do
+for helper in wifi-mac bluetooth-addr net-stability audio-defaults; do
     $SUDO install -m 0755 "$REPO/systemd/$helper.sh" "$ROOT/usr/local/sbin/$helper.sh"
 done
 $SUDO install -D -m 0644 "$REPO/systemd/persist-part.sh" \
     "$ROOT/usr/local/lib/equuleus/persist-part.sh"
+
+# There is no display on this device and no passwordless local login other than the
+# USB console, so Wi-Fi SSH needs root password authentication to be usable. The
+# stock openssh-server configuration refuses it.
+$SUDO install -d "$ROOT/etc/ssh/sshd_config.d"
+$SUDO tee "$ROOT/etc/ssh/sshd_config.d/10-equuleus.conf" >/dev/null <<'EOF'
+# The only ways into this device are the USB serial console and Wi-Fi SSH. With no
+# working display, password login for root is the practical option.
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
 
 # NetworkManager handles Wi-Fi, saved profiles and DHCP. Apply the factory MAC
 # before it manages wlan0 and retain it during scans and association.
@@ -109,7 +120,7 @@ for unit in systemd-networkd.service systemd-networkd.socket systemd-networkd-wa
 done
 $SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.service \
     wifi-mac.service NetworkManager.service bluetooth-addr.service bluetooth.service \
-    ssh.service sshd-keygen.service docker.service containerd.service
+    audio-defaults.service ssh.service sshd-keygen.service docker.service containerd.service
 $SUDO systemctl --root="$ROOT" set-default multi-user.target
 
 if [[ $BUILD_IMAGE == 1 ]]; then

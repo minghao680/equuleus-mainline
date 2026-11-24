@@ -1,0 +1,17 @@
+[Unit]
+Description=Enable the default speaker playback route
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
+# The frontends register as soon as the ADSP is up, but q6routing starts with no
+# backend enabled, so opening MultiMedia1 fails until a route is switched on.
+After=adsp-start.service sound.target
+Wants=sound.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/audio-defaults.sh
+# Waiting for the card and toggling mixer switches is quick; bound it anyway.
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

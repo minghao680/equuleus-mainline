@@ -64,9 +64,23 @@ nmcli device status
 nmcli connection modify PROFILE connection.autoconnect yes connection.autoconnect-priority 10
 ```
 
-SSH is available once the phone has a routable IP and your public key is in
-`authorized_keys` for the login account. Install your key from the USB console.
-The first SSH start generates the phone's host keys.
+SSH is available once the phone has a routable IP. The image permits root password
+authentication because the USB console is the only other way in; set a password from
+that console with `passwd`, or install your public key in
+`/root/.ssh/authorized_keys` and rely on keys. The first SSH start generates the
+phone's own host keys.
+
+Audio needs one mixer switch, which `audio-defaults.service` sets at boot so `aplay`
+works without manual configuration:
+
+```bash
+amixer -c 0 sget 'QUAT_MI2S_RX Audio Mixer MultiMedia1'   # playback [
+aplay -D plughw:0,0 /path/to/file.wav
+```
+
+That routes the MultiMedia frontends to the TAS2557 speaker amplifier. The SLIMBUS
+backend stays off: enabling it makes prepare fail with `-EINVAL` and silences the
+speaker path.
 
 The rootfs uses Debian's standard package set. Its preinstalled tools cover
 hardware inspection, networking, storage and everyday terminal use. The selection

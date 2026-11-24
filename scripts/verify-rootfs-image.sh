@@ -33,7 +33,7 @@ for pkg in bluez network-manager network-manager-l10n wpasupplicant firmware-ath
     wireless-regdb tqftpserv rmtfs protection-domain-mapper systemd-timesyncd \
     docker.io docker-cli containerd runc libvulkan1 mesa-vulkan-drivers vulkan-tools \
     locales sudo pciutils usbutils vim isc-dhcp-client alsa-utils alsa-ucm-conf openssh-server \
-    manpages-zh python3-venv; do
+    manpages-zh python3-venv glmark2-es2-drm; do
     if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg")" != installed ]; then
         echo "error: package not installed: $pkg" >&2
         exit 1
@@ -46,7 +46,7 @@ for cmd in nmtui nmcli bluetoothctl btmgmt sudo dhclient iperf3 \
     ssh curl wget dig nc socat arping tracepath mtr traceroute tcpdump \
     lsblk findmnt fdisk parted gdisk ncdu rsync mkfs.vfat mkfs.exfat mdir \
     tar gzip bzip2 xz zip unzip lz4 zstd pv \
-    man vim bc gawk /usr/bin/time git rg fdfind jq python3 screen tmux; do
+    man vim bc gawk /usr/bin/time git rg fdfind jq python3 screen tmux glmark2-es2-drm; do
     command -v "$cmd" >/dev/null || { echo "error: command missing: $cmd" >&2; exit 1; }
 done
 
@@ -85,6 +85,11 @@ grep -Fx 'LANG=zh_CN.UTF-8' /etc/locale.conf
 awk '$1 !~ /^#/ && $2 == "/" && $3 == "ext4" && $4 ~ /(^|,)x-systemd\.growfs(,|$)/ { ok=1 } END { exit !ok }' /etc/fstab
 [ -x /usr/lib/systemd/systemd-growfs ]
 
+# Wi-Fi SSH is the only usable login once the phone is off the USB cable.
+grep -q '^PermitRootLogin yes' /etc/ssh/sshd_config.d/10-equuleus.conf
+grep -q '^PasswordAuthentication yes' /etc/ssh/sshd_config.d/10-equuleus.conf
+[ -x /usr/local/sbin/audio-defaults.sh ]
+
 # udev creates by-partlabel asynchronously, so the address helpers must not depend
 # on it alone: without this the factory MAC was skipped on one boot and the
 # controller kept a random address.
@@ -100,7 +105,7 @@ done
 EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
-    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen; do
+    tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen audio-defaults; do
     if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled "$unit.service"; then
         echo "error: unit not enabled: $unit.service" >&2
         exit 1

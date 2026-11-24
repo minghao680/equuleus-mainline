@@ -101,7 +101,7 @@ packages=(
     rmtfs protection-domain-mapper tqftpserv firmware-atheros
     network-manager network-manager-l10n wpasupplicant iw rfkill wireless-regdb
     isc-dhcp-client systemd-timesyncd bluez alsa-utils alsa-ucm-conf
-    libvulkan1 mesa-vulkan-drivers vulkan-tools
+    libvulkan1 mesa-vulkan-drivers vulkan-tools glmark2-es2-drm
     docker.io docker-cli containerd runc
     locales sudo bash-completion pciutils usbutils util-linux-extra
     curl wget rsync file vim man-db manpages tree jq htop psmisc lsof
