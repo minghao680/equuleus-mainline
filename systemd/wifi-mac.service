@@ -8,7 +8,8 @@ Wants=network-pre.target
 Type=oneshot
 ExecStart=/usr/local/sbin/wifi-mac.sh
 RemainAfterExit=yes
-TimeoutStartSec=20
+# The helper waits up to 20 s for the persist partition to appear.
+TimeoutStartSec=30
 
 [Install]
 WantedBy=multi-user.target NetworkManager.service

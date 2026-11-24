@@ -3,11 +3,14 @@
 set -eu
 
 persist=/persist
-persist_dev=/dev/disk/by-partlabel/persist
 iface=wlan0
 
+. /usr/local/lib/equuleus/persist-part.sh
+
 if [ ! -r "$persist/wlan_mac.bin" ] && [ ! -r "$persist/wlan_bt/wlan.mac" ]; then
-    [ -b "$persist_dev" ] || exit 0
+    # by-partlabel is created asynchronously by udev; wait for it or read the
+    # partition table instead of giving up and leaving a random address.
+    persist_dev=$(equuleus_persist_partition) || exit 0
     persist=$(mktemp -d /run/equuleus-wlan.XXXXXXXX)
     if ! mount -t ext4 -o ro,noload "$persist_dev" "$persist"; then
         rmdir "$persist"

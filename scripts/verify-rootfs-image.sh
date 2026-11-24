@@ -84,6 +84,19 @@ locale -a | grep -Fx 'zh_CN.utf8'
 grep -Fx 'LANG=zh_CN.UTF-8' /etc/locale.conf
 awk '$1 !~ /^#/ && $2 == "/" && $3 == "ext4" && $4 ~ /(^|,)x-systemd\.growfs(,|$)/ { ok=1 } END { exit !ok }' /etc/fstab
 [ -x /usr/lib/systemd/systemd-growfs ]
+
+# udev creates by-partlabel asynchronously, so the address helpers must not depend
+# on it alone: without this the factory MAC was skipped on one boot and the
+# controller kept a random address.
+[ -r /usr/local/lib/equuleus/persist-part.sh ]
+grep -q 'equuleus_persist_partition' /usr/local/sbin/wifi-mac.sh
+grep -q 'equuleus_persist_partition' /usr/local/sbin/bluetooth-addr.sh
+for unit in wifi-mac bluetooth-addr; do
+    if grep -q 'ConditionPathExists=/dev/disk/by-partlabel/persist' "/etc/systemd/system/$unit.service"; then
+        echo "error: $unit.service depends on a by-partlabel condition that can race udev" >&2
+        exit 1
+    fi
+done
 EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \

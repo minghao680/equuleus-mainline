@@ -23,10 +23,15 @@
 PERSIST=/persist
 HCI=hci0
 
-if [ ! -d "$PERSIST/wlan_bt" ]; then
+. /usr/local/lib/equuleus/persist-part.sh
+
+if [ ! -r "$PERSIST/wlan_bt/bt.mac" ]; then
     mkdir -p "$PERSIST"
-    if [ -b /dev/disk/by-partlabel/persist ]; then
-        mount -o ro /dev/disk/by-partlabel/persist "$PERSIST" 2>/dev/null || true
+    # by-partlabel is created asynchronously by udev; wait for it or read the
+    # partition table instead of skipping the address.
+    persist_dev=$(equuleus_persist_partition) || persist_dev=
+    if [ -n "${persist_dev:-}" ]; then
+        mount -o ro -t ext4 "$persist_dev" "$PERSIST" 2>/dev/null || true
     fi
 fi
 

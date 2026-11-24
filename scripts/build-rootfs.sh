@@ -95,6 +95,8 @@ done
 for helper in wifi-mac bluetooth-addr net-stability; do
     $SUDO install -m 0755 "$REPO/systemd/$helper.sh" "$ROOT/usr/local/sbin/$helper.sh"
 done
+$SUDO install -D -m 0644 "$REPO/systemd/persist-part.sh" \
+    "$ROOT/usr/local/lib/equuleus/persist-part.sh"
 
 # NetworkManager handles Wi-Fi, saved profiles and DHCP. Apply the factory MAC
 # before it manages wlan0 and retain it during scans and association.

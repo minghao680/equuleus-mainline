@@ -13,7 +13,6 @@ Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STA
 # the ordering.
 After=local-fs.target
 Before=bluetooth.service
-ConditionPathExists=/dev/disk/by-partlabel/persist
 
 [Service]
 Type=oneshot
