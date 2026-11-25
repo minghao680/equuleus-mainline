@@ -1,0 +1,19 @@
+[Unit]
+Description=Connect the modem's IPv4 data bearer and configure it
+Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STATUS.md
+# ModemManager has to have published the modem and registered on the network
+# before a data call can be started.
+After=ModemManager.service modem-bringup.service
+Wants=ModemManager.service
+# Nothing else in this image configures a QRTR modem's netdev.
+Before=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/data-bringup.sh
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

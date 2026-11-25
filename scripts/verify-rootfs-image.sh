@@ -128,6 +128,24 @@ done
 [ -x /usr/bin/qrtr-ns ]
 grep -q 'After=qrtr-ns.service' /etc/systemd/system/ModemManager.service.d/10-equuleus.conf
 
+# The modem helper turns the card's slot into the primary UIM session; without it
+# ModemManager reports "GW primary session index unknown" and the modem fails.
+[ -x /usr/local/sbin/modem-bringup.sh ]
+grep -q 'uim-change-provisioning-session' /usr/local/sbin/modem-bringup.sh
+grep -q 'aid' /usr/local/sbin/modem-bringup.sh
+
+# The data helper connects one IPv4 bearer and applies its addresses, because
+# ModemManager does not configure a QRTR modem's netdev itself.
+[ -x /usr/local/sbin/data-bringup.sh ]
+grep -q 'simple-connect' /usr/local/sbin/data-bringup.sh
+grep -q 'ip-type=ipv4' /usr/local/sbin/data-bringup.sh
+# Dual-stack bearers negotiate addresses but deliver no downlink on this modem.
+if grep -q 'ip-type=ipv4v6' /usr/local/sbin/data-bringup.sh; then
+    echo 'error: data-bringup asks for a dual-stack bearer, which breaks data' >&2
+    exit 1
+fi
+[ -d /etc/equuleus ]
+
 # Wi-Fi power save must be turned off on every connection, or an SSH session pays
 # a per-packet wake-up penalty.
 [ -x /etc/NetworkManager/dispatcher.d/90-wifi-powersave ]
@@ -137,7 +155,7 @@ EOF
 
 for unit in adsp-start bluetooth bluetooth-addr wifi-mac NetworkManager rmtfs \
     tqftpserv pd-mapper systemd-timesyncd docker containerd ssh sshd-keygen audio-defaults \
-    qrtr-ns ModemManager; do
+    qrtr-ns ModemManager modem-bringup data-bringup; do
     if ! $SUDO systemctl --root="$mount_dir" --quiet is-enabled "$unit.service"; then
         echo "error: unit not enabled: $unit.service" >&2
         exit 1

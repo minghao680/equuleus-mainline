@@ -556,6 +556,83 @@ So the chain now reaches "modem created by ModemManager" and stops only at
 `sim-missing`: the card slots report `error: no-atr-received`, no network is
 registered and the signal is -128 dBm.
 
+### The SIM is only usable once a UIM session exists
+
+Two things were wrong, and neither was the card:
+
+1. **Slot 1 detection is broken on this unit.** `--uim-get-slot-status` is the
+   reliable presence check (`--uim-get-card-status` reports an error state even
+   with an empty tray). The card reads as `present` in slot 2 only.
+2. **The modem never activates the USIM application by itself.** It stays at
+   `Application state: 'detected'`, no primary GW provisioning session exists, and
+   ModemManager fails with `Couldn't check unlock status: QMI operation failed:
+   GW primary session index unknown`.
+
+`systemd/modem-bringup.service` fixes it with three plain `qmicli` calls: bring the
+radio online (the modem boots in `shutting-down` mode), switch the card's physical
+slot onto logical slot 1, then activate the primary session **with the
+application AID**. Without `aid=` qmicli powers the card off first and the modem
+rejects that with `QMI error (3) 'Internal'`; with the AID it succeeds and the
+application goes `detected -> ready`.
+
+Measured:
+
+```
+$ mmcli -m 0
+  state: registered          operator: 46000 / CHINA MOBILE
+  signal quality: 76%        packet service state: attached
+  own number: 8617868189616
+
+$ mmcli -m 0 --messaging-list-sms
+  SMS/4 (received)  equuleus sms test 1
+  SMS/6 (received)  ä¸­æ...  (see below)
+```
+
+Sending and receiving both work, including Chinese text: the received PDU decodes
+to the exact UTF-8 bytes of "中文测试：equuleus 发送正常" with zero replacement
+characters.
+
+### Mobile data: the bearer comes up, the data path does not
+
+With `CONFIG_RMNET` (plus its `ETHERNET`/`NET_VENDOR_QUALCOMM` parents, which a
+minimal config drops silently) the modem creates a QMAP mux link and the bearer
+negotiates a real address:
+
+```
+qmapmux0.0@rmnet_ipa0   IPv4 10.136.56.157/30  gateway 10.136.56.158
+                        DNS 221.179.38.7, 120.196.165.7, MTU 1410
+```
+
+**IPv4 data works** once the bearer is connected as IPv4-only and its addresses
+are applied by hand - ModemManager negotiates them but nothing configures a QRTR
+modem's netdev, and NetworkManager does not manage this modem. Measured:
+
+```
+qmapmux0.0  10.210.154.78/30  via 10.210.154.77  mtu 1410
+            dns 221.179.38.7, 120.196.165.7
+
+download  16,137,272 bytes in 4.33 s   ≈ 3.73 MB/s  (29.8 Mbit/s)
+upload     8,585,216 bytes in 12.0 s   ≈ 0.72 MB/s  ( 5.7 Mbit/s)
+latency    30/30 replies, min/avg/max 29.9/36.4/57.2 ms, 0% loss
+```
+
+Two behaviours of this modem firmware shape the design:
+
+* **A dual-stack or IPv6-only bearer delivers no downlink at all.** With
+  `ip-type=ipv4v6` or `ipv6` the modem hands out addresses (including a real
+  `2409:...` IPv6 address) but the parent interface never receives a usable
+  frame; even the IPv4 half stops working. `ip-type=ipv4` works. IPv6 over this
+  modem therefore remains unsupported, not merely unconfigured.
+* **A bearer cannot be torn down and re-created within one boot.** Reconnecting
+  leaves the rmnet mux link with a working uplink but a dead downlink; only a
+  modem restart (a reboot) restores it. The `data-bringup` helper consequently
+  connects exactly one bearer, only if none is up, and never disconnects.
+
+`systemd/data-bringup.service` runs after registration, connects
+`apn=cmnet,ip-type=ipv4` (the APN can be overridden in `/etc/equuleus/data-apn`)
+and applies the address, gateway, MTU and DNS. Verified on hardware after a cold
+boot: the bearer comes up on its own and `ping` succeeds with 0% loss.
+
 Both units come from the Debian packages (`qrtr-ns.service` from `qrtr-tools`,
 `ModemManager.service` from `modemmanager`, which pulls `polkitd`);
 `systemd/ModemManager-10-equuleus.conf` only adds the `Wants=`/`After=` ordering

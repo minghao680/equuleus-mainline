@@ -89,9 +89,15 @@ Type=idle
 EOF
 
 # ADSP uses firmware on the real root. The packaged rmtfs unit owns MPSS startup.
-for unit in adsp-start wifi-mac bluetooth-addr audio-defaults; do
+for unit in adsp-start wifi-mac bluetooth-addr audio-defaults modem-bringup data-bringup; do
     $SUDO install -m 0644 "$REPO/systemd/$unit.service" "$ROOT/etc/systemd/system/$unit.service"
 done
+# QMI helper that activates the UIM session before ModemManager probes the modem.
+$SUDO install -m 0755 "$REPO/scripts/modem-bringup.sh" "$ROOT/usr/local/sbin/modem-bringup.sh"
+# ModemManager negotiates data addresses but nothing applies them on a QRTR
+# modem, so the bearer is connected and configured here.
+$SUDO install -m 0755 "$REPO/scripts/data-bringup.sh" "$ROOT/usr/local/sbin/data-bringup.sh"
+$SUDO install -d -m 0755 "$ROOT/etc/equuleus"
 # bluetooth.service must pull the address helper in, not the other way round.
 $SUDO install -D -m 0644 "$REPO/systemd/bluetooth.service.d-10-equuleus.conf" \
     "$ROOT/etc/systemd/system/bluetooth.service.d/10-equuleus.conf"
@@ -133,7 +139,7 @@ $SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.ser
     wifi-mac.service NetworkManager.service bluetooth-addr.service \
     bluetooth.service \
     audio-defaults.service ssh.service sshd-keygen.service docker.service containerd.service \
-    qrtr-ns.service ModemManager.service
+    qrtr-ns.service ModemManager.service modem-bringup.service data-bringup.service
 $SUDO systemctl --root="$ROOT" set-default multi-user.target
 
 if [[ $BUILD_IMAGE == 1 ]]; then
