@@ -367,6 +367,58 @@ fails with `Network is unreachable` even though the default route looks fine.
 `hotspot stop` removes the interface, policy route, NAT rules and the dnsmasq
 snippet again.
 
+## Vibration motor: works
+
+The PMI8998 haptics block is enabled in the board tree exactly like the sibling
+Xiaomi boards do it:
+
+```dts
+&pmi8998_haptics {
+	qcom,wave-play-rate-us = <4878>;
+
+	status = "okay";
+};
+```
+
+The driver registers an input device and the motor responds to force feedback:
+
+```
+input: spmi_haptics as .../pmic@3:haptics@c000/input/input0
+$ evdev dump: FF_RUMBLE, FF_PERIODIC (sine/square/triangle), FF_GAIN
+```
+
+A rumble effect and a 100 Hz sine effect both upload and play without errors.
+The actuator type is left at the pmi8998.dtsi default, which is the linear
+resonant actuator this phone uses.
+
+## Microphone: works, but only on a second frontend
+
+Recording is analog: the DMIC path records digital silence, while `AMIC1`
+carries the signal (`rms ~750` against `0`). The codec chain is
+
+```
+AMIC1 -> ADC1 -> DEC0 -> CDC_IF TX0 -> AIF1_CAP -> SLIMBUS_0_TX
+```
+
+and `audio-defaults.sh` sets every step plus the q6routing switch. Two traps
+cost time here:
+
+* **The capture switch must be on before opening the PCM.** Without
+  `MultiMediaN Mixer SLIMBUS_0_TX` the open succeeds and the first read fails
+  with EIO.
+* **A frontend cannot carry both directions.** With the capture switch on
+  MultiMedia1 as well, the DSP refuses playback routing
+  (`Routing not setup for MultiMedia-1 Session`) and `aplay` fails with EIO.
+  Playback therefore stays on MultiMedia1 and capture uses MultiMedia2:
+
+```sh
+aplay   -D hw:0,0 tone.wav        # speaker (QUAT_MI2S_RX -> TAS2557)
+arecord -D hw:0,1 rec.wav         # AMIC1 microphone
+```
+
+Controls are addressed by name, not by numid: numids follow registration order
+and are not stable across kernel changes.
+
 ## Panel backlight: not controllable on a dead panel
 
 `/sys/class/backlight/ae94000.dsi.0/` exists and reports `max_brightness = 1023`,

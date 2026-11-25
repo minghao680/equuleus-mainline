@@ -15,7 +15,8 @@ and Samsung EA8074 panel driver in this repository.
 | Bluetooth | UART6 uses RTS/CTS. Configuring the factory address brought up `hci0` and a scan found nearby devices. |
 | CPU | `qcom-cpufreq-hw` reached 1.77 GHz on the little cores and 2.65 GHz on the big cores |
 | GPU | Mesa Freedreno FD630 ran glmark2, and Turnip exposed Vulkan 1.3 |
-| Audio | ALSA enumerated playback and capture PCMs. The TAS2557 speaker amplifier loaded its firmware. |
+| Audio | Playback through the TAS2557 amplifier and capture from the AMIC1 microphone, both set up by `audio-defaults.service`. |
+| Vibration | The PMI8998 haptics block drives the motor and accepts force-feedback effects. |
 | Battery and clock | PMI8998 reports charge and voltage. `systemd-timesyncd` synchronizes the system clock once networking is up. |
 | Cellular modem | SMS sending and receiving work, including Chinese text, once the UIM session is activated. IPv4 mobile data works (~30 Mbit/s down, ~6 Mbit/s up). IPv6 needs IPA routing rules that upstream does not implement, so it does not work; tunnel IPv6 over the IPv4 link instead. Calls are untested. |
 
@@ -80,8 +81,23 @@ aplay -D plughw:0,0 /path/to/file.wav
 ```
 
 That routes the MultiMedia frontends to the TAS2557 speaker amplifier. The SLIMBUS
-backend stays off: enabling it makes prepare fail with `-EINVAL` and silences the
-speaker path.
+playback backend stays off: enabling it makes prepare fail with `-EINVAL` and
+silences the speaker path.
+
+Capture is enabled by the same service, on a **different** frontend: a frontend
+cannot carry both directions, and putting capture on MultiMedia1 makes playback
+routing fail with `Routing not setup for MultiMedia-1 Session`.
+
+```bash
+arecord -D hw:0,1 -f S16_LE -r 48000 -c 2 -d 5 rec.wav   # AMIC1 microphone
+```
+
+The microphone is analog (`AMIC1 -> ADC1 -> DEC0 -> CDC_IF TX0 -> AIF1_CAP`); the
+DMIC path records silence. See the [status notes](docs/STATUS.md) for the two
+mixer traps that make a wrong setup look like broken hardware.
+
+The PMI8998 haptics block drives the vibration motor and accepts force-feedback
+effects; no userspace setup is needed.
 
 The rootfs uses Debian's standard package set. Its preinstalled tools cover
 hardware inspection, networking, storage and everyday terminal use. The selection

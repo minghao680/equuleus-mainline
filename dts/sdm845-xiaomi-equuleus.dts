@@ -1023,3 +1023,13 @@
 		compatible = "qcom,imem-restart-reason";
 	};
 };
+/*
+ * Haptic motor. PMI8998 drives it; the sibling Xiaomi boards (dipper, perseus)
+ * only override the wave play rate, so the defaults in pmi8998.dtsi (sine wave,
+ * buffer play mode, brake pattern) are what the hardware expects.
+ */
+&pmi8998_haptics {
+	qcom,wave-play-rate-us = <4878>;
+
+	status = "okay";
+};
