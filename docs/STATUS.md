@@ -434,6 +434,22 @@ CORE_INIT_CMD  20 01 00    -> 40 01 19 00 03 0e 02 ...
                               RF interfaces 0x80 0x82 0x83 0x84
 ```
 
+The reference clock is now modelled: PM8998 exposes three clock dividers at
+`0x5b00` (`qcom,spmi-clkdiv`, `CONFIG_SPMI_PMIC_CLKDIV`), and divider 3 is
+BBCLK3 at 19.2 MHz - `clk_summary` shows `div_clk3 19.2 MHz enabled` once a
+consumer exists. Nothing in mainline consumes it, so locally the divider was
+forced on with `CLK_IS_CRITICAL` in `clk-spmi-pmic-div.c`; the clean fix is to
+have the NFC driver request it (`clocks = <&pm8998_clkdiv 2>`,
+`clock-names = "ref_clk"`).
+
+Even with the clock running, holding cards against the back of the phone for
+several minutes produced no `RF_DISCOVER_NTF` while discovery was active
+(`RF_DISCOVER_RSP status=0x00`, protocols A/B/F/V). That points at the RF path
+itself - the antenna coil or its connector - rather than the controller, which
+answers NCI, reports its RF interfaces and accepts discovery. The unit has a
+dead panel, so it may well have been opened and the antenna flex left
+disconnected.
+
 What is still missing: **userspace**. Mainline NFC talks generic netlink only,
 so there is no `/dev/nfcN`, and Debian trixie does not ship `neard`. Driving
 `RF_DISCOVER` by hand over raw I2C still returns status `0x05`, i.e. the command

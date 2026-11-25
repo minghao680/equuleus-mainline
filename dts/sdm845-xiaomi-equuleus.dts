@@ -1104,3 +1104,20 @@
 		bias-disable;
 	};
 };
+/*
+ * PM8998 clock dividers. BBCLK3 (divider 3, 0x5d00) is the NFC controller's
+ * reference clock in the vendor tree ("qcom,clk-src = BBCLK3"). Mainline has no
+ * node for it, and the driver enable is what actually starts the output, so the
+ * driver marks the dividers critical for now (see clk-spmi-pmic-div.c).
+ */
+&pm8998_lsid0 {
+	pm8998_clkdiv: clock-controller@5b00 {
+		compatible = "qcom,spmi-clkdiv";
+		reg = <0x5b00>;
+		#clock-cells = <1>;
+		clocks = <&rpmhcc RPMH_CXO_CLK>;
+		clock-names = "xo";
+		qcom,num-clkdivs = <3>;
+		clock-output-names = "div_clk1", "div_clk2", "div_clk3";
+	};
+};
