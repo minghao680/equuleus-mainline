@@ -456,6 +456,49 @@ so there is no `/dev/nfcN`, and Debian trixie does not ship `neard`. Driving
 payload needs the exact NCI encoding - tag detection is therefore not
 demonstrated yet.
 
+## Rear camera: the sensor node is in place, the CCI bus is not answering
+
+The main camera is a Sony IMX363 on CCI master 0 (I2C address 0x10). Wiring taken
+from the vendor tree for the Equuleus MP v2.1 variant:
+
+| Signal | Where |
+| --- | --- |
+| reset | TLMM GPIO 80, active low |
+| MCLK | CAMCC `CAM_CC_MCLK0_CLK`, 24 MHz, on GPIO 13 |
+| VANA | PM8998 L22 (2.85 V) switched by TLMM GPIO 102 |
+| VDIG | 1.35 V on TLMM GPIO 99, then a second switch on PM8998 GPIO 11 |
+| VIO | TLMM GPIO 75 (**2.8 V** in the vendor tree, not 1.8 V) |
+
+With `CONFIG_MEDIA_SUPPORT`, `MEDIA_CONTROLLER`, `V4L_PLATFORM_DRIVERS`,
+`VIDEO_QCOM_CAMSS` and `VIDEO_IMX363` enabled, CAMSS and CCI come up (`/dev/media0`,
+`/dev/video0..11`, `i2c-16`/`i2c-17`) and the sensor binds to the i2c bus as
+`16-0010`, but probe fails:
+
+```
+imx363: 4 lanes
+i2c-qcom-cci ac4a000.cci: master 0 queue 0 timeout
+imx363 16-0010: Error reading reg 0x0016: -110
+imx363 16-0010: probe with driver imx363 failed with error -110
+```
+
+What was tried and ruled out:
+
+* a longer power-on wait in the driver (10 ms instead of 400-600 us) - no change;
+* every plausible address on **both** CCI buses times out, including the camera
+  EEPROM at 0x50. A missing device would NACK quickly; a timeout on everything
+  means the bus itself is not electrically alive, which points at the camera I/O
+  rail that feeds the pull-ups;
+* driving the enable pins by hand to keep the sensor powered is impossible: the
+  fixed regulators claim those GPIOs at probe.
+
+One thing to not repeat: marking `cam0_vana` `regulator-always-on` hangs the
+boot. Its `vin-supply` is PM8998 L22, an RPMh regulator, and forcing that on
+during early boot deadlocks; a plain GPIO switch does not have that problem.
+
+Next step: park VIO (TLMM 75) as a gpio-hog or a plain always-on fixed regulator
+so the bus pull-ups are powered from boot, then scan the CCI bus for the EEPROM
+at 0x50 - that tells us whether the bus works before chasing the sensor again.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into

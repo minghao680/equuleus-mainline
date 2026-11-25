@@ -7,6 +7,7 @@
 
 /dts-v1/;
 
+#include <dt-bindings/clock/qcom,camcc-sdm845.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/spmi/spmi.h>
@@ -1119,5 +1120,140 @@
 		clock-names = "xo";
 		qcom,num-clkdivs = <3>;
 		clock-output-names = "div_clk1", "div_clk2", "div_clk3";
+	};
+};
+/*
+ * Rear main camera: Sony IMX363 on CCI master 0 / CSIPHY 0.
+ *
+ * Wiring comes from the vendor device tree for the Equuleus MP v2.1 variant:
+ * reset on GPIO 80 (active low), MCLK0 from camcc at 24 MHz, VANA 2.85 V through
+ * a switch on GPIO 102 (fed from PM8998 L22), VDIG 1.35 V switched by GPIO 99
+ * and VIO 1.8 V switched by GPIO 75. The sensor answers at I2C address 0x10 on
+ * the first CCI bus.
+ */
+/ {
+	cam0_vana: regulator-cam0-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "cam0_vana";
+		regulator-min-microvolt = <2850000>;
+		regulator-max-microvolt = <2850000>;
+		gpio = <&tlmm 102 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		vin-supply = <&vreg_l22a_2p85>;
+		startup-delay-us = <1000>;
+	
+	};
+
+	cam0_vdig: regulator-cam0-vdig {
+		compatible = "regulator-fixed";
+		regulator-name = "cam0_vdig";
+		regulator-min-microvolt = <1350000>;
+		regulator-max-microvolt = <1350000>;
+		gpio = <&tlmm 99 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <1000>;
+	
+	};
+
+	/*
+	 * The vendor tree switches VDIG twice: the 1.35 V rail is gated by
+	 * TLMM 99 and the supply that actually reaches the sensor is gated by
+	 * PM8998 GPIO 11 ("CAM_VDIG0" in the camera power table). Without the
+	 * second stage the sensor stays unpowered and every read times out.
+	 */
+	cam0_vdig_sw: regulator-cam0-vdig-sw {
+		compatible = "regulator-fixed";
+		regulator-name = "cam0_vdig_sw";
+		regulator-min-microvolt = <1350000>;
+		regulator-max-microvolt = <1350000>;
+		gpio = <&pm8998_gpios 11 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		vin-supply = <&cam0_vdig>;
+	
+	};
+
+	cam0_vio: regulator-cam0-vio {
+		compatible = "regulator-fixed";
+		regulator-name = "cam0_vio";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&tlmm 75 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <1000>;
+	
+	};
+};
+
+&tlmm {
+	cam0_default: cam0-default-state {
+		pins = "gpio80";
+		function = "gpio";
+
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+&cci {
+	status = "okay";
+};
+
+&camss {
+	vdda-phy-supply = <&vreg_l1a_0p875>;
+	vdda-pll-supply = <&vreg_l26a_1p2>;
+
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+
+			csiphy0_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+
+				remote-endpoint = <&imx363_ep>;
+			};
+		};
+	};
+};
+
+&cci_i2c0 {
+	status = "okay";
+
+	camera@10 {
+		compatible = "sony,imx363";
+		reg = <0x10>;
+
+		reset-gpios = <&tlmm 80 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam0_default &cam_mclk0_default>;
+
+		clocks = <&clock_camcc CAM_CC_MCLK0_CLK>;
+		clock-names = "xvclk";
+		clock-frequency = <24000000>;
+
+		vana-supply = <&cam0_vana>;
+		vdig-supply = <&cam0_vdig_sw>;
+		vif-supply = <&cam0_vio>;
+
+		orientation = <1>;
+		rotation = <270>;
+
+		status = "okay";
+
+		port {
+			imx363_ep: endpoint {
+				clock-lanes = <1>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <636000000>;
+
+				remote-endpoint = <&csiphy0_ep>;
+			};
+		};
 	};
 };
