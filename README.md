@@ -15,7 +15,7 @@ and Samsung EA8074 panel driver in this repository.
 | Bluetooth | UART6 uses RTS/CTS. Configuring the factory address brought up `hci0` and a scan found nearby devices. |
 | CPU | `qcom-cpufreq-hw` reached 1.77 GHz on the little cores and 2.65 GHz on the big cores |
 | GPU | Mesa Freedreno FD630 ran glmark2, and Turnip exposed Vulkan 1.3 |
-| Audio | Playback through the TAS2557 amplifier and capture from the AMIC1 microphone, both set up by `audio-defaults.service`. |
+| Audio | Playback through the TAS2557 amplifier and capture from the AMIC3 microphone, both set up by `audio-defaults.service`. |
 | Vibration | The PMI8998 haptics block drives the motor and accepts force-feedback effects. |
 | Battery and clock | PMI8998 reports charge and voltage. `systemd-timesyncd` synchronizes the system clock once networking is up. |
 | Cellular modem | SMS sending and receiving work, including Chinese text, once the UIM session is activated. IPv4 mobile data works (~30 Mbit/s down, ~6 Mbit/s up). IPv6 needs IPA routing rules that upstream does not implement, so it does not work; tunnel IPv6 over the IPv4 link instead. Calls are untested. |
@@ -89,11 +89,11 @@ cannot carry both directions, and putting capture on MultiMedia1 makes playback
 routing fail with `Routing not setup for MultiMedia-1 Session`.
 
 ```bash
-arecord -D hw:0,1 -f S16_LE -r 48000 -c 2 -d 5 rec.wav   # AMIC1 microphone
+arecord -D hw:0,1 -f S16_LE -r 48000 -c 2 -d 5 rec.wav   # AMIC3 microphone
 ```
 
-The microphone is analog (`AMIC1 -> ADC1 -> DEC0 -> CDC_IF TX0 -> AIF1_CAP`); the
-DMIC path records silence. See the [status notes](docs/STATUS.md) for the two
+The microphone is analog on **ADC3** (`AMIC3 -> ADC3 -> DEC0 -> CDC_IF TX0 ->
+AIF1_CAP`); the DMIC path records silence and ADC1/ADC2 are floating inputs. See the [status notes](docs/STATUS.md) for the two
 mixer traps that make a wrong setup look like broken hardware.
 
 The PMI8998 haptics block drives the vibration motor and accepts force-feedback

@@ -341,6 +341,92 @@ whole sound card - earpiece and headset included.
 The amplifier firmware loads at 0.56 s, before the root filesystem is mounted, so
 it has to be in the initramfs like the GPU blobs.
 
+## Microphone: works on AMIC3
+
+The built-in microphone is analog and sits on **ADC3** (`AMIC MUX0 = ADC3`,
+`ADC MUX0 = AMIC`). Two wrong assumptions cost a lot of time here:
+
+* **ADC1 and ADC2 are floating inputs on this board.** They produce a
+  suspiciously healthy noise floor (rms ~1000 and ~12000 respectively) which
+  looks like a working microphone until you compare it against a real sound
+  source. The test that settles it: record while clapping, then look at the
+  per-window rms; a real microphone shows sharp peaks, a floating input stays
+  flat. A synthetic file with three clap bursts was used to validate the
+  analysis itself first.
+* **The microphone bias voltages in the board tree were swapped** relative to
+  the vendor tree. They are now `micbias1 = 2.7 V`, `2 = 1.8 V`, `3 = 2.7 V`,
+  `4 = 2.7 V`, matching Xiaomi's values; an electret microphone at 1.8 V does
+  not work.
+
+The vendor tree additionally drives GPIO 62 as an "ADC2 switch"
+(`aud_active` = output-high). It is not proven that the built-in microphone
+needs it, but the sweep that found ADC3 ran with it high, so `audio-defaults`
+sets it too (through `/sys/class/gpio`, `GPIO_SYSFS` is enabled).
+
+Capture still has to run on a **different frontend than playback**: with the
+capture switch on MultiMedia1 as well, the DSP refuses playback routing
+(`Routing not setup for MultiMedia-1 Session`) and `aplay` fails with EIO. That
+is why playback stays on MultiMedia1 and capture uses MultiMedia2:
+
+```sh
+aplay   -D hw:0,0 tone.wav        # speaker (QUAT_MI2S_RX -> TAS2557)
+arecord -D hw:0,1 rec.wav         # AMIC3 microphone
+```
+
+The codec chain is `AMIC3 -> ADC3 -> DEC0 -> CDC_IF TX0 -> AIF1_CAP ->
+SLIMBUS_0_TX`; each step is one simple-mixer control, addressed by name because
+numids follow registration order and are not stable across kernel changes.
+
+## Wi-Fi hotspot: works, off unless started by hand
+
+`scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
+an access point, sharing either the Wi-Fi uplink or the modem's IPv4 data. It is
+not started at boot; there is no unit or hook for it on purpose.
+
+Measured on hardware: a laptop connected to `Equuleus-AP`, received
+`192.168.50.38` from dnsmasq, resolved names and browsed with the wired NIC
+disabled. Both uplinks were exercised with the same client.
+
+Two details are easy to get wrong and are handled by the helper:
+
+* the AP must be created as a second interface (`ap0`) and left **down** before
+  `hostapd` starts - starting it while the interface is up gives
+  `Could not connect to kernel driver`;
+* it must use the **same channel as the STA connection**, and on 5 GHz the
+  hostapd config needs `ieee80211ac=1`, otherwise it fails with
+  `Failed to set beacon parameters`. That is a firmware limitation of the
+  WCN3990, not a configuration choice.
+
+For `hotspot start mobile` the helper adds a policy route and, importantly, the
+on-link route for the modem gateway inside that table; without it forwarding
+fails with `Network is unreachable` even though the default route looks fine.
+`hotspot stop` removes the interface, policy route, NAT rules and the dnsmasq
+snippet again.
+
+## Vibration motor: works
+
+The PMI8998 haptics block is enabled in the board tree exactly like the sibling
+Xiaomi boards do it:
+
+```dts
+&pmi8998_haptics {
+	qcom,wave-play-rate-us = <4878>;
+
+	status = "okay";
+};
+```
+
+The driver registers an input device and the motor responds to force feedback:
+
+```
+input: spmi_haptics as .../pmic@3:haptics@c000/input/input0
+$ evdev dump: FF_RUMBLE, FF_PERIODIC (sine/square/triangle), FF_GAIN
+```
+
+A rumble effect and a 100 Hz sine effect both upload and play without errors.
+The actuator type is left at the pmi8998.dtsi default, which is the linear
+resonant actuator this phone uses.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into

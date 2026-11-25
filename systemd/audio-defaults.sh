@@ -78,17 +78,35 @@ set_ctl() { # name value
     amixer -c "$card" sset "$1" "$2" >/dev/null 2>&1 || true
 }
 
-set_ctl 'ADC MUX0' 'AMIC'      # ADC0 input: analog, not DMIC
-set_ctl 'AMIC MUX0' 'ADC1'     # ADC1 carries AMIC1
-set_ctl 'ADC1 Volume' '90%'
+set_ctl 'ADC MUX0' 'AMIC'      # analog input, not the digital microphone
+set_ctl 'AMIC MUX0' 'ADC3'     # the built-in microphone sits on ADC3
+set_ctl 'ADC3 Volume' '90%'
 set_ctl 'DEC0 Volume' '100%'
 set_ctl 'CDC_IF TX0 MUX' 'DEC0'
 set_ctl 'AIF1_CAP Mixer SLIM TX0' 'on'
 
+# The vendor tree drives GPIO 62 as an "ADC2 switch" (aud_active = high). It is
+# not clear that the built-in microphone needs it, but the sweep that found the
+# microphone on ADC3 ran with the pin high, so keep it there.
+for chip in /sys/class/gpio/gpiochip*; do
+    case "$(cat "$chip/label" 2>/dev/null)" in
+        *pinctrl*)
+            base=$(cat "$chip/base" 2>/dev/null)
+            if [ -n "${base:-}" ]; then
+                num=$((base + 62))
+                [ -d "/sys/class/gpio/gpio$num" ] || echo "$num" > /sys/class/gpio/export 2>/dev/null
+                echo out > "/sys/class/gpio/gpio$num/direction" 2>/dev/null
+                echo 1 > "/sys/class/gpio/gpio$num/value" 2>/dev/null
+            fi
+            break
+            ;;
+    esac
+done
+
 echo "audio-defaults: enabled $cap capture route(s)"
 
 if arecord -D "hw:$card,1" -f S16_LE -r 48000 -c 2 -d 1 /tmp/audio-defaults-probe.wav >/dev/null 2>&1; then
-    echo 'audio-defaults: capture verified on hw:0,1 (AMIC1)'
+    echo 'audio-defaults: capture verified on hw:0,1 (AMIC3)'
 else
     echo 'audio-defaults: capture did not open'
 fi

@@ -97,6 +97,24 @@
 
 	reserved-memory {
 
+		/*
+		 * pstore/ramoops: keep the last kernel messages in RAM across a
+		 * reboot. Without this a panic leaves nothing behind - the console
+		 * gadget only exists once the initramfs has started, so an early
+		 * hang produces no output at all.
+		 *
+		 * Placed right after the framebuffer region (9d400000+02400000) and
+		 * clear of everything sdm845.dtsi reserves below that.
+		 */
+		ramoops_region: ramoops@9f800000 {
+			compatible = "ramoops";
+			reg = <0x0 0x9f800000 0x0 0x100000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x20000>;
+		};
+
 		/* hack: Framebuffer memory region. */
 		framebuffer_region@9d400000 {
 			reg = <0x0 0x9d400000 0x0 0x02400000>;
@@ -523,10 +541,10 @@
 	vdd-rx-supply = <&vreg_s4a_1p8>;
 	vdd-io-supply = <&vreg_s4a_1p8>;
 
-	qcom,micbias1-microvolt = <1800000>;
-	qcom,micbias2-microvolt = <2700000>;
-	qcom,micbias3-microvolt = <1800000>;
-	qcom,micbias4-microvolt = <1800000>;
+	qcom,micbias1-microvolt = <2700000>;
+	qcom,micbias2-microvolt = <1800000>;
+	qcom,micbias3-microvolt = <2700000>;
+	qcom,micbias4-microvolt = <2700000>;
 };
 
 /*

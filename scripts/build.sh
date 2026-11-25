@@ -98,6 +98,17 @@ else
 fi
 make -s -C "$KERNEL_SRC" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
+# BTF generation needs a pahole that matches the compiler's DWARF, and it fails
+# with "Invalid argument" on some build hosts (reproduced with pahole 1.30 in
+# WSL). It only feeds eBPF CO-RE tooling, so a local build can skip it instead of
+# editing the shipped config. CI keeps it enabled.
+if [ "${NO_BTF:-0}" = "1" ]; then
+    "$KERNEL_SRC/scripts/config" --file "$KERNEL_SRC/.config" \
+        --disable DEBUG_INFO_BTF --disable DEBUG_INFO_BTF_MODULES
+    make -s -C "$KERNEL_SRC" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+    echo "  BTF disabled for this build (NO_BTF=1)"
+fi
+
 # -----------------------------------------------------------------------------
 say "building kernel"
 make -C "$KERNEL_SRC" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
