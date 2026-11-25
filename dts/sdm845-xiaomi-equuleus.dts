@@ -1051,3 +1051,56 @@
 
 	status = "okay";
 };
+/*
+ * NFC: NXP PN553 on i2c3. The vendor tree describes it as nq@28 on i2c@88c000,
+ * with VEN on GPIO 128, FIRM on GPIO 88 and the interrupt on GPIO 63.
+ *
+ * Only the transport is described: the NCI protocol runs in userspace (neard /
+ * libnfc), which is how this driver is meant to be used. The RF clock comes from
+ * the PMIC (BBCLK3 in the vendor tree) and mainline does not model it, so the
+ * controller depends on the bootloader leaving that clock running.
+ */
+&i2c3 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	nfc@28 {
+		compatible = "nxp,pn553", "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <63 IRQ_TYPE_LEVEL_HIGH>;
+
+		enable-gpios = <&tlmm 128 GPIO_ACTIVE_HIGH>;
+		firmware-gpios = <&tlmm 88 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&nfc_int_default &nfc_ven_default &nfc_firm_default>;
+	};
+};
+
+&tlmm {
+	nfc_int_default: nfc-int-default-state {
+		pins = "gpio63";
+		function = "gpio";
+
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	nfc_ven_default: nfc-ven-default-state {
+		pins = "gpio128";
+		function = "gpio";
+
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	nfc_firm_default: nfc-firm-default-state {
+		pins = "gpio88";
+		function = "gpio";
+
+		drive-strength = <2>;
+		bias-disable;
+	};
+};

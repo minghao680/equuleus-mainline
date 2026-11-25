@@ -78,10 +78,12 @@ set_ctl() { # name value
     amixer -c "$card" sset "$1" "$2" >/dev/null 2>&1 || true
 }
 
+# Routing only. The volume controls ('ADC3 Volume', 'DEC0 Volume') are not
+# addressable by name through amixer on this codec - it reports "Unable to find
+# simple control" - and their power-on defaults (ADC3 = 18/20, DEC0 = 124/124)
+# are already where we want them, so they are left alone.
 set_ctl 'ADC MUX0' 'AMIC'      # analog input, not the digital microphone
 set_ctl 'AMIC MUX0' 'ADC3'     # the built-in microphone sits on ADC3
-set_ctl 'ADC3 Volume' '90%'
-set_ctl 'DEC0 Volume' '100%'
 set_ctl 'CDC_IF TX0 MUX' 'DEC0'
 set_ctl 'AIF1_CAP Mixer SLIM TX0' 'on'
 

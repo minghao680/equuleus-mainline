@@ -377,6 +377,24 @@ The codec chain is `AMIC3 -> ADC3 -> DEC0 -> CDC_IF TX0 -> AIF1_CAP ->
 SLIMBUS_0_TX`; each step is one simple-mixer control, addressed by name because
 numids follow registration order and are not stable across kernel changes.
 
+### A capture stream can be wedged by mixer experiments
+
+Chasing the right input meant switching `AMIC MUX0`, `CDC_IF TX0 MUX` and the
+SLIMBUS routing by hand over and over. At some point capture started returning
+**digital silence - exactly zero on both channels** even though the codec's DAPM
+showed `AIF1 Capture`, `AMIC3`, `ADC3` and `SLIM TX0` all powered. `dmesg`
+showed nothing. A reboot restored it immediately (`rms ~2200`).
+
+So: changing these routes at runtime can leave the DSP capture path in a dead
+state that only a reboot clears. Configure the path once at boot
+(`audio-defaults`) and leave it alone; if capture suddenly returns zeros while
+every mixer value looks right, reboot before suspecting the hardware.
+
+A second lesson from the same hunt: a floating analog input has a plausible
+looking noise floor (~950-1200 rms) and occasional ambient spikes, so raw "rms is
+not zero" proves nothing. Compare against a real stimulus, or check the noise
+floor collapse when the microphone is covered.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
