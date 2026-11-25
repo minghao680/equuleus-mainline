@@ -616,13 +616,33 @@ upload     8,585,216 bytes in 12.0 s   ≈ 0.72 MB/s  ( 5.7 Mbit/s)
 latency    30/30 replies, min/avg/max 29.9/36.4/57.2 ms, 0% loss
 ```
 
+Additional attempts to make IPv6 usable all failed in the same way - the modem
+accepts the call and returns addresses but forwards nothing:
+
+| Attempt | Result |
+|---|---|
+| `ipv4v6` bearer, IPv4 configured first | no ingress at all |
+| `ipv6` bearer as the first call after boot | no ingress at all |
+| DAD and ND disabled (`arp off`, `addrgenmode none`) | no change |
+| rmnet links for mux ids 0-7 created and watched | no link ever received a frame |
+| Two separate PDN calls (v4 + v6) | modem rejects: `InvalidOperation` / `Internal` |
+| Default data profile set to `cmnet` + `IPV4V6` | call still delivers no downlink |
+
+So IPv6 is not a configuration problem that a helper script can fix: the modem's
+IPA downlink for a non-IPv4 flow is never set up. Android does that from
+userspace through `ipacm`, which installs IPA routing and filter rules; mainline
+has neither the interface nor a rule-provisioning client, so this needs platform
+work rather than a device tree or ModemManager change. BAM-DMUX is not an
+alternative here: `CONFIG_QCOM_BAM_DMUX` exists in the tree but SDM845 has no
+`qcom,bam-dmux` node (this SoC carries its data path over IPA).
+
 Two behaviours of this modem firmware shape the design:
 
 * **A dual-stack or IPv6-only bearer delivers no downlink at all.** With
   `ip-type=ipv4v6` or `ipv6` the modem hands out addresses (including a real
   `2409:...` IPv6 address) but the parent interface never receives a usable
-  frame; even the IPv4 half stops working. `ip-type=ipv4` works. IPv6 over this
-  modem therefore remains unsupported, not merely unconfigured.
+  frame; even the IPv4 half stops working. `ip-type=ipv4` works. See the table
+  above for the attempts that ruled out a mux id or DAD/ND explanation.
 * **A bearer cannot be torn down and re-created within one boot.** Reconnecting
   leaves the rmnet mux link with a working uplink but a dead downlink; only a
   modem restart (a reboot) restores it. The `data-bringup` helper consequently

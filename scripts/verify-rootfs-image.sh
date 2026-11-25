@@ -84,6 +84,11 @@ grep -aq '/readonly/vendor/firmware_mnt/image/' /usr/bin/tqftpserv
 [ "$(LC_ALL=zh_CN.UTF-8 locale charmap)" = UTF-8 ]
 locale -a | grep -Fx 'zh_CN.utf8'
 grep -Fx 'LANG=zh_CN.UTF-8' /etc/locale.conf
+# A UTC phone in China is eight hours off in every timestamp.
+[ "$(readlink -f /etc/localtime)" = "$(readlink -f /usr/share/zoneinfo/Asia/Shanghai)" ] || {
+    echo 'error: timezone is not Asia/Shanghai' >&2
+    exit 1
+}
 awk '$1 !~ /^#/ && $2 == "/" && $3 == "ext4" && $4 ~ /(^|,)x-systemd\.growfs(,|$)/ { ok=1 } END { exit !ok }' /etc/fstab
 [ -x /usr/lib/systemd/systemd-growfs ]
 

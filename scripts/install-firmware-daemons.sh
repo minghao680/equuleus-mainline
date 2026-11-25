@@ -131,6 +131,15 @@ if ! grep -Fxq 'zh_CN.UTF-8 UTF-8' "$ROOT/etc/locale.gen"; then
 fi
 in_root locale-gen
 in_root update-locale --locale-file /etc/locale.conf LANG=zh_CN.UTF-8
+# The image ships UTC unless told otherwise, which leaves a phone in China eight
+# hours off and breaks every timestamp in the journal. Keep the zone explicit.
+timezone=${TZONE:-Asia/Shanghai}
+if [ -e "$ROOT/usr/share/zoneinfo/$timezone" ]; then
+    in_root ln -sf "/usr/share/zoneinfo/$timezone" /etc/localtime
+    printf '%s\n' "$timezone" > "$ROOT/etc/timezone"
+else
+    echo "warning: zoneinfo/$timezone is unavailable, leaving UTC" >&2
+fi
 in_root apt-get clean
 
 if ! grep -aq '/readonly/vendor/firmware_mnt/image/' "$ROOT/usr/bin/tqftpserv"; then
