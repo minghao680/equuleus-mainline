@@ -17,7 +17,7 @@ and Samsung EA8074 panel driver in this repository.
 | GPU | Mesa Freedreno FD630 ran glmark2, and Turnip exposed Vulkan 1.3 |
 | Audio | ALSA enumerated playback and capture PCMs. The TAS2557 speaker amplifier loaded its firmware. |
 | Battery and clock | PMI8998 reports charge and voltage. `systemd-timesyncd` synchronizes the system clock once networking is up. |
-| Cellular modem | SMS sending and receiving work, including Chinese text, once the UIM session is activated. IPv4 mobile data works (~30 Mbit/s down, ~6 Mbit/s up); an IPv6 or dual-stack bearer negotiates addresses but carries no downlink, so IPv6 is not usable. Calls are untested. |
+| Cellular modem | SMS sending and receiving work, including Chinese text, once the UIM session is activated. IPv4 mobile data works (~30 Mbit/s down, ~6 Mbit/s up). IPv6 needs IPA routing rules that upstream does not implement, so it does not work; tunnel IPv6 over the IPv4 link instead. Calls are untested. |
 
 The bring-up notes include measured values and failure logs. [Hardware status](docs/STATUS.md)
 
@@ -106,6 +106,37 @@ Use `bluetoothctl show` and `bluetoothctl --timeout 12 scan on` to check the
 Bluetooth controller. The boot service reads the factory address on the phone
 and supplies it through the kernel management interface before BlueZ starts.
 More detail is available in the [Bluetooth bring-up notes](docs/bluetooth-complete.md).
+
+### Wi-Fi hotspot (optional, off by default)
+
+The image ships `hostapd` and `dnsmasq` plus a helper, but nothing starts the
+hotspot on boot. Turn it on when you need it:
+
+```bash
+hotspot start wifi     # share the Wi-Fi connection the phone is using
+hotspot start mobile   # share the modem's IPv4 data
+hotspot status
+hotspot stop
+```
+
+Clients connect to `Equuleus-AP` with the password `equuleus1234` and get an
+address from `192.168.50.10-100`. Edit `/etc/equuleus/hotspot.conf` to change
+the SSID and password.
+
+Things worth knowing before using it:
+
+* The AP runs on a second interface (`ap0`) that must sit on the **same channel
+  as the Wi-Fi client connection**. The WCN3990 firmware only allows
+  concurrent STA+AP on one channel, and on 5 GHz it also needs
+  `ieee80211ac=1` in the hostapd config - the helper sets both.
+* Because the AP shares the radio with the uplink, throughput is roughly halved
+  while the hotspot runs.
+* `hotspot start mobile` needs an active IPv4 bearer. It installs a policy route
+  (`192.168.50.0/24` → table 200) so client traffic leaves over the modem rather
+  than the Wi-Fi uplink, and adds the on-link route for the modem's gateway -
+  without that the kernel calls the default route unreachable.
+* `hotspot stop` removes the interface, the policy route, the NAT rules and the
+  DHCP snippet again, so `dnsmasq` stays healthy when the hotspot is off.
 
 ## Build locally
 

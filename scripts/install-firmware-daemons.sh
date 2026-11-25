@@ -112,6 +112,9 @@ packages=(
     # IPA net port the kernel now exposes. modemmanager pulls polkitd, which its
     # shipped unit Requires.
     libqmi-utils qrtr-tools modemmanager
+    # Optional Wi-Fi hotspot: off by default, started by hand with `hotspot`.
+    # hostapd runs the AP, dnsmasq hands out leases, iptables does the NAT.
+    hostapd dnsmasq iptables
     # Shell, editing and scripting
     bc gawk time git ripgrep fd-find python3-venv screen tmux manpages-zh
     # Network and system diagnostics

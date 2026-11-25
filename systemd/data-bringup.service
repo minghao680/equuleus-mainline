@@ -5,9 +5,8 @@ Documentation=https://github.com/minghao680/equuleus-mainline/blob/main/docs/STA
 # before a data call can be started.
 After=ModemManager.service modem-bringup.service
 Wants=ModemManager.service
-# Nothing else in this image configures a QRTR modem's netdev.
-Before=network-online.target
-Wants=network-online.target
+# Deliberately NOT ordered before network-online.target: with no SIM the helper
+# waits for registration and would otherwise hold that target for minutes.
 
 [Service]
 Type=oneshot

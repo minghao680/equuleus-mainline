@@ -151,6 +151,17 @@ if grep -q 'ip-type=ipv4v6' /usr/local/sbin/data-bringup.sh; then
 fi
 [ -d /etc/equuleus ]
 
+# The hotspot helper exists for users who need it, but it must stay off unless
+# started by hand: no unit and no boot hook may reference it.
+[ -x /usr/local/sbin/hotspot ]
+grep -q 'hotspot start' /usr/local/sbin/hotspot
+grep -q '^SSID=' /etc/equuleus/hotspot.conf
+command -v hostapd >/dev/null && command -v dnsmasq >/dev/null
+if $SUDO grep -rls 'hotspot' "$mount_dir/etc/systemd/system/" 2>/dev/null | grep -q .; then
+    echo 'error: something in /etc/systemd enables the hotspot' >&2
+    exit 1
+fi
+
 # Wi-Fi power save must be turned off on every connection, or an SSH session pays
 # a per-packet wake-up penalty.
 [ -x /etc/NetworkManager/dispatcher.d/90-wifi-powersave ]

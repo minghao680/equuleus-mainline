@@ -97,6 +97,11 @@ $SUDO install -m 0755 "$REPO/scripts/modem-bringup.sh" "$ROOT/usr/local/sbin/mod
 # ModemManager negotiates data addresses but nothing applies them on a QRTR
 # modem, so the bearer is connected and configured here.
 $SUDO install -m 0755 "$REPO/scripts/data-bringup.sh" "$ROOT/usr/local/sbin/data-bringup.sh"
+# Optional hotspot helper. It is installed but nothing starts it: there is no
+# unit and no boot hook on purpose, so the AP stays off until someone runs
+# "hotspot start".
+$SUDO install -m 0755 "$REPO/scripts/hotspot.sh" "$ROOT/usr/local/sbin/hotspot"
+$SUDO install -D -m 0644 "$REPO/config/hotspot.conf" "$ROOT/etc/equuleus/hotspot.conf"
 $SUDO install -d -m 0755 "$ROOT/etc/equuleus"
 # bluetooth.service must pull the address helper in, not the other way round.
 $SUDO install -D -m 0644 "$REPO/systemd/bluetooth.service.d-10-equuleus.conf" \

@@ -42,6 +42,12 @@ done
 idx=$(mmcli -L 2>/dev/null | grep -oE 'Modem/[0-9]+' | head -1 | cut -d/ -f2)
 [ -n "${idx:-}" ] || { log "could not determine the modem index"; exit 0; }
 
+# No card means nothing to connect; do not sit in the registration wait below.
+if timeout 15 mmcli -m "$idx" 2>/dev/null | grep -q 'sim-missing'; then
+    log "no SIM in the modem, skipping data"
+    exit 0
+fi
+
 # Wait for registration: a call started too early is rejected.
 i=0
 while [ "$i" -lt 60 ]; do

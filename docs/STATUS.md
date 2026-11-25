@@ -341,6 +341,32 @@ whole sound card - earpiece and headset included.
 The amplifier firmware loads at 0.56 s, before the root filesystem is mounted, so
 it has to be in the initramfs like the GPU blobs.
 
+## Wi-Fi hotspot: works, off unless started by hand
+
+`scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
+an access point, sharing either the Wi-Fi uplink or the modem's IPv4 data. It is
+not started at boot; there is no unit or hook for it on purpose.
+
+Measured on hardware: a laptop connected to `Equuleus-AP`, received
+`192.168.50.38` from dnsmasq, resolved names and browsed with the wired NIC
+disabled. Both uplinks were exercised with the same client.
+
+Two details are easy to get wrong and are handled by the helper:
+
+* the AP must be created as a second interface (`ap0`) and left **down** before
+  `hostapd` starts - starting it while the interface is up gives
+  `Could not connect to kernel driver`;
+* it must use the **same channel as the STA connection**, and on 5 GHz the
+  hostapd config needs `ieee80211ac=1`, otherwise it fails with
+  `Failed to set beacon parameters`. That is a firmware limitation of the
+  WCN3990, not a configuration choice.
+
+For `hotspot start mobile` the helper adds a policy route and, importantly, the
+on-link route for the modem gateway inside that table; without it forwarding
+fails with `Network is unreachable` even though the default route looks fine.
+`hotspot stop` removes the interface, policy route, NAT rules and the dnsmasq
+snippet again.
+
 ## Panel backlight: not controllable on a dead panel
 
 `/sys/class/backlight/ae94000.dsi.0/` exists and reports `max_brightness = 1023`,
@@ -629,7 +655,17 @@ accepts the call and returns addresses but forwards nothing:
 | Default data profile set to `cmnet` + `IPV4V6` | call still delivers no downlink |
 
 So IPv6 is not a configuration problem that a helper script can fix: the modem's
-IPA downlink for a non-IPv4 flow is never set up. Android does that from
+IPA downlink for a non-IPv4 flow is never set up. The downstream kernel shows what
+is missing: `ipa_v3/ipa_rt.c`, `ipa_flt.c` and `ipa_hdr.c` program per-family
+routing, filter and header tables, a userspace daemon (`ipacm`) drives them
+through `IPA_IOCTL_ADD_RT_RULE` / `IPA_IOC_COPY_HDR`, and `ipa_qmi_service.c`
+answers the modem's IPA requests - `ipacm` even installs dedicated "dummy" v6
+header and filter handles. Upstream's driver has none of that.
+
+**Practical way to get IPv6 on this device:** tunnel it over the working IPv4
+link. A WireGuard link to a VPS provides public IPv4 *and* IPv6 plus inbound
+reachability, which native dual-stack would not give anyway: China Mobile hands
+out a CGNAT IPv4 address, so there is nothing to port-forward. Android does that from
 userspace through `ipacm`, which installs IPA routing and filter rules; mainline
 has neither the interface nor a rule-provisioning client, so this needs platform
 work rather than a device tree or ModemManager change. BAM-DMUX is not an
