@@ -1125,11 +1125,18 @@
 /*
  * Rear main camera: Sony IMX363 on CCI master 0 / CSIPHY 0.
  *
- * Wiring comes from the vendor device tree for the Equuleus MP v2.1 variant:
- * reset on GPIO 80 (active low), MCLK0 from camcc at 24 MHz, VANA 2.85 V through
- * a switch on GPIO 102 (fed from PM8998 L22), VDIG 1.35 V switched by GPIO 99
- * and VIO 1.8 V switched by GPIO 75. The sensor answers at I2C address 0x10 on
- * the first CCI bus.
+ * Wiring comes from the vendor tree for the Equuleus MP v2.1 variant. Xiaomi's
+ * own camera dtsi labels the power pins, and those labels are what pins this
+ * down - an earlier version had the two analog rails swapped:
+ *
+ *   TLMM 40        "avdd 2.8"  - 2.8 V analog rail (was not modelled at all)
+ *   TLMM 102       "avdd 1.8"  - 1.8 V I/O rail
+ *   TLMM 99        - 1.35 V rail feeding the digital switch
+ *   PM8998 GPIO 11 - the digital (VDIG) switch
+ *   TLMM 75        - camera_viodd_ldo, 2.8 V
+ *
+ * With the 2.8 V rail unpowered the sensor pulled SDA low, so every address on
+ * both CCI buses timed out instead of NACKing.
  */
 / {
 	cam0_vana: regulator-cam0-vana {
@@ -1137,11 +1144,20 @@
 		regulator-name = "cam0_vana";
 		regulator-min-microvolt = <2850000>;
 		regulator-max-microvolt = <2850000>;
-		gpio = <&tlmm 102 GPIO_ACTIVE_HIGH>;
+		gpio = <&tlmm 40 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		vin-supply = <&vreg_l22a_2p85>;
 		startup-delay-us = <1000>;
-	
+	};
+
+	cam0_vif: regulator-cam0-vif {
+		compatible = "regulator-fixed";
+		regulator-name = "cam0_vif";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&tlmm 102 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <1000>;
 	};
 
 	cam0_vdig: regulator-cam0-vdig {
@@ -1152,15 +1168,8 @@
 		gpio = <&tlmm 99 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		startup-delay-us = <1000>;
-	
 	};
 
-	/*
-	 * The vendor tree switches VDIG twice: the 1.35 V rail is gated by
-	 * TLMM 99 and the supply that actually reaches the sensor is gated by
-	 * PM8998 GPIO 11 ("CAM_VDIG0" in the camera power table). Without the
-	 * second stage the sensor stays unpowered and every read times out.
-	 */
 	cam0_vdig_sw: regulator-cam0-vdig-sw {
 		compatible = "regulator-fixed";
 		regulator-name = "cam0_vdig_sw";
@@ -1169,18 +1178,16 @@
 		gpio = <&pm8998_gpios 11 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		vin-supply = <&cam0_vdig>;
-	
 	};
 
 	cam0_vio: regulator-cam0-vio {
 		compatible = "regulator-fixed";
 		regulator-name = "cam0_vio";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
 		gpio = <&tlmm 75 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 		startup-delay-us = <1000>;
-	
 	};
 };
 
@@ -1239,7 +1246,7 @@
 
 		vana-supply = <&cam0_vana>;
 		vdig-supply = <&cam0_vdig_sw>;
-		vif-supply = <&cam0_vio>;
+		vif-supply = <&cam0_vif>;
 
 		orientation = <1>;
 		rotation = <270>;
