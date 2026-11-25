@@ -1069,7 +1069,7 @@
 		reg = <0x28>;
 
 		interrupt-parent = <&tlmm>;
-		interrupts = <63 IRQ_TYPE_LEVEL_HIGH>;
+		interrupts = <63 IRQ_TYPE_EDGE_RISING>;
 
 		enable-gpios = <&tlmm 128 GPIO_ACTIVE_HIGH>;
 		firmware-gpios = <&tlmm 88 GPIO_ACTIVE_HIGH>;

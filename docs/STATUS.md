@@ -395,6 +395,51 @@ looking noise floor (~950-1200 rms) and occasional ambient spikes, so raw "rms i
 not zero" proves nothing. Compare against a real stimulus, or check the noise
 floor collapse when the microphone is covered.
 
+## NFC: the controller works, the userspace stack is the open item
+
+The PN553 sits on `i2c3` at address 0x28; VEN is TLMM GPIO 128, FIRM is GPIO 88
+and the interrupt is GPIO 63, which matches the vendor tree for the Equuleus MP
+v2.1 variant. With the driver enabled the chip binds:
+
+```
+/sys/class/nfc/nfc0
+/sys/bus/i2c/devices/3-0028 -> nxp-nci_i2c
+```
+
+Two mistakes made this look like dead hardware for a long time, and both are
+worth remembering:
+
+* **A read does not prove anything.** The PN553 is a mailbox: it ACKs writes
+  always and only answers a read when a packet is queued. Probing it with
+  `i2ctransfer r1@0x28` therefore reports `No such device` on a perfectly
+  healthy chip. Probe with a write (`i2ctransfer -y 3 w1@0x28 0x00`), or send a
+  real NCI command and read the response.
+* **CLK_REQ is not a power signal here.** `qcom,nq-clkreq` points at PM8998
+  GPIO 21, not at a TLMM pin (the phandle in the vendor DTB resolves to the
+  PMIC GPIO controller). It reads low even while the chip answers NCI
+  commands, so it says nothing about whether the controller is powered.
+
+The boot hang from the first attempt was the interrupt type: the driver leaves
+the IRQ line high in `NXP_NCI_MODE_COLD` and does not acknowledge anything, so a
+`IRQ_TYPE_LEVEL_HIGH` interrupt fires forever. OnePlus 6 uses
+`IRQ_TYPE_EDGE_RISING`; with that change the driver probes cleanly and the
+system boots.
+
+Observed handshake over raw I2C (driver unbound), which shows the chip is
+functional:
+
+```
+CORE_RESET_CMD 20 00 01 00 -> 40 00 03 00 10 00      (status 0x00, NCI 1.0)
+CORE_INIT_CMD  20 01 00    -> 40 01 19 00 03 0e 02 ...
+                              RF interfaces 0x80 0x82 0x83 0x84
+```
+
+What is still missing: **userspace**. Mainline NFC talks generic netlink only,
+so there is no `/dev/nfcN`, and Debian trixie does not ship `neard`. Driving
+`RF_DISCOVER` by hand over raw I2C still returns status `0x05`, i.e. the command
+payload needs the exact NCI encoding - tag detection is therefore not
+demonstrated yet.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
