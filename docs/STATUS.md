@@ -640,6 +640,32 @@ calibration rather than about a measured speed-up. Rolling back is a `cp`:
 restoring `board-2.bin.equuleus-orig` returns the image to the exact stock file
 and re-running the unit re-applies the device data deterministically.
 
+### MSA permissions cannot be skipped on this board
+
+When the WLAN occasionally fails to come up, the failing call is
+`qcom_scm_assign_mem()` moving the MSA region to the WLAN subsystem, so the
+obvious idea is `qcom,msa-fixed-perm`: with that property ath10k skips the SCM
+permission dance entirely and the bring-up stops depending on TZ state.
+
+It does not work here. Tested on the live device, the firmware dies immediately:
+
+```
+ath10k_snoc 18800000.wifi: board_file api 2 bmi_id N/A crc32 00000000
+ath10k_snoc 18800000.wifi: qmi chip_id 0x30214 ... board_id 0xff
+ath10k_snoc 18800000.wifi: firmware crashed! (guid f27e5c8e-...)
+ath10k_snoc 18800000.wifi: (null) target 0x00000000 chip_id 0x00000000
+```
+
+No `wlan0` appears at all. The property is only correct on platforms whose
+bootloader pre-grants the region to the WLAN subsystem; on this one it does not,
+so the host's assignment is mandatory. The property was reverted.
+
+That closes the "fix it at the root" route for the rare failure: the assignment
+cannot be removed, and TZ/XPU state is not something Linux controls. What is left
+is recovery after the fact - the platform device can be re-probed from userspace
+(`/sys/bus/platform/drivers/ath10k_snoc/{unbind,bind}`), which was measured
+bringing `wlan0` back in about four seconds after an unbind.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
