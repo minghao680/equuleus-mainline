@@ -876,14 +876,15 @@
 	status = "okay";
 };
 
+/*
+ * The second USB port is wired as a host on this board. The vendor tree sets
+ * dr_mode = "host" and drives VBUS through PM8998 GPIO 2, with PM8998 GPIO 8 as
+ * the VBUS-detect input; the MTP comment about "no vbus signal" does not apply
+ * here. Host mode gives the phone an OTG port that can take keyboards, storage
+ * and hubs.
+ */
 &usb_2_dwc3 {
-	/*
-	 * Though the USB block on SDM845 can support host, there's no vbus
-	 * signal for this port on MTP.  Thus (unless you have a non-compliant
-	 * hub that works without vbus) the only sensible thing is to force
-	 * peripheral mode.
-	 */
-	dr_mode = "peripheral";
+	dr_mode = "host";
 };
 
 &usb_2_hsphy {

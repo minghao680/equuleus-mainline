@@ -796,6 +796,38 @@ Result:
 | `/dev/video12` | encoder | NV12 in, H.264/HEVC out |
 | `/dev/video13` | decoder | **H.264, VP8, VP9, HEVC, MPEG-2** |
 
+## USB: OTG host on one port, NCM networking on the other
+
+The two dwc3 controllers now have distinct jobs.
+
+**`a800000.usb` is a host.** The board tree had it forced to `peripheral` with a
+comment copied from the MTP device tree ("no vbus signal for this port on MTP"),
+but that comment does not describe this handset: Xiaomi's own tree sets
+`dr_mode = "host"` there and drives VBUS through PM8998 GPIO 2 with GPIO 8 as the
+VBUS-detect input. Switching it to `host` brings up xHCI:
+
+```
+xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 1
+xhci-hcd xhci-hcd.1.auto: Host supports USB 3.0 SuperSpeed
+```
+
+So the phone can take keyboards, storage and hubs through an OTG adapter. An
+external supply is still needed - the port does not source VBUS by itself.
+
+**`a600000.usb` stays a peripheral**, and it now carries two functions. The
+initramfs builds gadget `g1` with only an ACM function, which is what the serial
+console rides on, so the cable could only carry a terminal. `usb-ncm.service`
+adds an NCM function to the *same* gadget - the console keeps working - and
+configures the resulting `usb0` interface:
+
+```
+usb0  UP  192.168.42.1/24
+```
+
+The host side just needs an address on that subnet. That gives a low-latency USB
+link that works without Wi-Fi, useful as a fallback path and for file transfer.
+It is applied at boot and verified across a reboot.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
