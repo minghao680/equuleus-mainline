@@ -114,6 +114,10 @@ for helper in wifi-mac bluetooth-addr net-stability audio-defaults cpu-boost per
 done
 # Tuning for usb-ncm.service: the address the phone uses on the USB link.
 $SUDO install -D -m 0644 "$REPO/config/usb-ncm.conf" "$ROOT/etc/equuleus/usb-ncm.conf"
+$SUDO install -D -m 0644 "$REPO/systemd/90-equuleus-usb-gadget.rules" \
+    "$ROOT/etc/udev/rules.d/90-equuleus-usb-gadget.rules"
+# The UDC add event now starts the service, including after an OTG disconnect.
+$SUDO systemctl --root="$ROOT" disable usb-ncm.service
 # Tuning for zram-swap.service: size, priority, compressor, swappiness.
 $SUDO install -D -m 0644 "$REPO/config/zram.conf" "$ROOT/etc/equuleus/zram.conf"
 # Tuning for perf-tuning.service: idle latency and UFS gear.
@@ -155,7 +159,7 @@ $SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.ser
     bluetooth.service \
     audio-defaults.service cpu-boost.service wifi-bdf.service ssh.service sshd-keygen.service docker.service containerd.service \
     qrtr-ns.service ModemManager.service modem-bringup.service data-bringup.service \
-    zram-swap.service perf-tuning.service venus-fw.service usb-ncm.service
+    zram-swap.service perf-tuning.service venus-fw.service
 $SUDO systemctl --root="$ROOT" set-default multi-user.target
 
 if [[ $BUILD_IMAGE == 1 ]]; then

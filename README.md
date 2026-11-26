@@ -41,9 +41,11 @@ fastboot -s SERIAL flash userdata rootfs.ext4
 fastboot -s SERIAL reboot
 ```
 
-Open the USB serial port on the host at 115200 baud. The initramfs creates the
-CDC-ACM gadget, mounts `/dev/sda21` and switches to systemd. If the root mount
-fails, it exposes a shell over USB.
+Open the USB serial port on the host at 115200 baud. The initramfs prepares the
+CDC-ACM gadget, mounts the UFS `userdata` partition and switches to systemd.
+A boot image can select a specific ext4 filesystem on UFS with `root=UUID=<uuid>`
+in its kernel command line. If the root mount fails in USB peripheral mode,
+the initramfs exposes a shell over USB.
 
 The release image has a 4 GiB ext4 filesystem for transport. On first boot,
 `x-systemd.growfs` in `fstab` expands it to fill the existing userdata partition.

@@ -1,13 +1,7 @@
 [Unit]
-Description=Add a USB network (NCM) function to the serial-console gadget
+Description=Configure the USB serial and NCM gadget in peripheral mode
 Documentation=https://github.com/minghao680/equuleus-mainline
-After=sysinit.target
-Wants=sysinit.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/usb-ncm.sh
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target

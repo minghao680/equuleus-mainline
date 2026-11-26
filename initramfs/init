@@ -21,9 +21,32 @@
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export HOME=/
 
-# Where the Debian rootfs lives: the UFS userdata partition.
-ROOT_PART=${ROOT_PART:-/dev/sda21}
+# USB storage can claim an sdX name before UFS registers its LUNs.
+ROOT_PART=${ROOT_PART:-}
+ROOT_UUID=
 ROOT_MNT=/mnt/root
+
+find_ufs_root() {
+	for partition in /sys/class/block/*/partition; do
+		[ -r "$partition" ] || continue
+		node=${partition%/partition}
+		case $(readlink -f "$node") in
+		*/1d84000.ufshc/*) ;;
+		*) continue ;;
+		esac
+
+		dev=/dev/${node##*/}
+		[ -b "$dev" ] || continue
+		if [ -n "$ROOT_UUID" ]; then
+			blkid "$dev" 2>/dev/null | grep -Fq " UUID=\"$ROOT_UUID\"" || continue
+		else
+			grep -qx 'PARTNAME=userdata' "$node/uevent" || continue
+		fi
+		printf '%s\n' "$dev"
+		return 0
+	done
+	return 1
+}
 
 report() { echo "[init] $*"; }
 
@@ -46,16 +69,9 @@ mount -t configfs configfs /sys/kernel/config || {
 report "filesystems mounted"
 
 # --- 2. USB gadget -----------------------------------------------------------
-i=0
-while [ "$i" -lt 100 ]; do
-	[ -n "$(ls -A /sys/class/udc 2>/dev/null)" ] && break
-	i=$((i + 1))
-	sleep 0.1
-done
-
-UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
-[ -n "$UDC" ] || shell_fallback "no UDC - DWC3 did not probe"
-
+# Only the primary controller reaches the handset connector. In host mode
+# DWC3 removes its UDC, so leave a prepared gadget for userspace to bind later.
+UDC=a600000.usb
 G=/sys/kernel/config/usb_gadget/g1
 mkdir -p "$G" || shell_fallback "cannot create gadget directory"
 cd "$G" || shell_fallback "cannot enter $G"
@@ -78,24 +94,19 @@ echo 120                      > configs/c.1/MaxPower
 mkdir -p functions/acm.usb0
 ln -sf functions/acm.usb0 configs/c.1/ 2>/dev/null
 
-echo "$UDC" > UDC || shell_fallback "cannot bind gadget to UDC"
-
 i=0
 while [ "$i" -lt 50 ]; do
-	[ -e /dev/ttyGS0 ] && break
+	[ -d "/sys/class/udc/$UDC" ] && break
 	i=$((i + 1))
 	sleep 0.1
 done
 
-[ -e /dev/ttyGS0 ] || {
-	echo "[init] bound but /dev/ttyGS0 did not appear"
-	exec /bin/sh
-}
-
-report "gadget bound, console is on /dev/ttyGS0"
-
-# From here on, talk to the console rather than to nothing.
-exec >>/dev/ttyGS0 2>&1 </dev/null
+if [ -d "/sys/class/udc/$UDC" ] && echo "$UDC" > UDC && [ -c /dev/ttyGS0 ]; then
+	report "gadget bound, console is on /dev/ttyGS0"
+	exec >>/dev/ttyGS0 2>&1 </dev/null
+else
+	report "USB console pending, continuing boot"
+fi
 
 echo
 echo "=============================================================="
@@ -105,18 +116,33 @@ echo "=============================================================="
 echo
 
 # --- 3. find and mount the root filesystem -----------------------------------
-report "waiting for $ROOT_PART"
+# ABL may append Android's root=/dev/dm-0. An explicit UUID selects Debian.
+for option in $(cat /proc/cmdline); do
+	case "$option" in
+	root=UUID=*) ROOT_UUID=${option#root=UUID=} ;;
+	esac
+done
+
+root_target=${ROOT_PART:-UFS userdata}
+if [ -z "$ROOT_PART" ] && [ -n "$ROOT_UUID" ]; then
+	root_target="UFS filesystem UUID=$ROOT_UUID"
+fi
+report "waiting for $root_target"
 
 i=0
 while [ "$i" -lt 100 ]; do
+	if [ -z "$ROOT_PART" ]; then
+		ROOT_PART=$(find_ufs_root)
+	fi
 	[ -b "$ROOT_PART" ] && break
 	i=$((i + 1))
 	sleep 0.1
 done
 
 if [ ! -b "$ROOT_PART" ]; then
-	shell_fallback "root partition $ROOT_PART never appeared"
+	shell_fallback "root partition $root_target never appeared"
 fi
+report "using $ROOT_PART"
 
 mkdir -p "$ROOT_MNT"
 for attempt in 1 2 3; do

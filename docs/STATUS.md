@@ -796,37 +796,52 @@ Result:
 | `/dev/video12` | encoder | NV12 in, H.264/HEVC out |
 | `/dev/video13` | decoder | **H.264, VP8, VP9, HEVC, MPEG-2** |
 
-## USB: OTG host on one port, NCM networking on the other
+## USB NCM and USB-C host status
 
-The two dwc3 controllers now have distinct jobs.
+**USB-C host and 5 V sourcing were verified on the test handset.** The handset
+port uses `a600000` at USB 2.0 High-Speed. The board tree leaves the secondary
+controller at `a800000` disabled, as on stock Equuleus MP v2.1.
 
-**`a800000.usb` is a host.** The board tree had it forced to `peripheral` with a
-comment copied from the MTP device tree ("no vbus signal for this port on MTP"),
-but that comment does not describe this handset: Xiaomi's own tree sets
-`dr_mode = "host"` there and drives VBUS through PM8998 GPIO 2 with GPIO 8 as the
-VBUS-detect input. Switching it to `host` brings up xHCI:
+The stock tree connects `a600000` to the PMI8998 Type-C/PD controller via extcon.
+The PD controller gets VBUS from the charger driver's `smb2-vbus` regulator.
+Xiaomi's Linux drivers control this regulator through the PMI8998 SMB2 OTG block
+at `0x1100` over SPMI, without loading a separate firmware blob.
+[PD policy engine](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/dcfb1676925aec83b06ae04fd8ca989ced75067c/drivers/usb/pd/policy_engine.c#L4229)
+[SMB2 regulator](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/dcfb1676925aec83b06ae04fd8ca989ced75067c/drivers/power/supply/qcom/qpnp-smb2.c#L1662)
+[OTG enable path](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/dcfb1676925aec83b06ae04fd8ca989ced75067c/drivers/power/supply/qcom/smb-lib.c#L1825)
 
-```
-xhci-hcd xhci-hcd.1.auto: new USB bus registered, assigned bus number 1
-xhci-hcd xhci-hcd.1.auto: Host supports USB 3.0 SuperSpeed
-```
+The previous `gpio514` trial hit PM8998 GPIO3 on SPMI SID 0. The write denial
+applies to that GPIO. VBUS voltage on the handset connector was unmeasured.
 
-So the phone can take keyboards, storage and hubs through an OTG adapter. An
-external supply is still needed - the port does not source VBUS by itself.
+The experimental build uses PMI8998 hardware CC detection and limits the fixed
+5 V boost output to 500 mA. The charger driver checks the port voltage and
+suspends the USB input path before enabling the boost. It checks soft-start and
+voltage before reporting the host role to DWC3 and requests boost shutdown on
+detach or an OTG fault. The current table follows the
+[PMI8998 VBUS regulator series](https://lists.openwall.net/linux-kernel/2026/11/21/1331).
 
-**`a600000.usb` stays a peripheral**, and it now carries two functions. The
-initramfs builds gadget `g1` with only an ACM function, which is what the serial
-console rides on, so the cable could only carry a terminal. `usb-ncm.service`
-adds an NCM function to the *same* gadget - the console keeps working - and
-configures the resulting `usb0` interface:
+The initramfs prepares the ACM gadget and binds it when the primary UDC is
+available. The Debian rootfs starts `usb-ncm.service` on each UDC add event. The
+service configures the NCM interface at `192.168.42.1/24`. The host can use
+`192.168.42.2/24` on its NCM adapter.
 
-```
-usb0  UP  192.168.42.1/24
-```
+The first flash-drive trial showed that `USBIN_CMD_IL.SUSPEND` latched and the
+power path was on the battery, but `USBIN_SUSPEND_STS` stayed clear with no
+external input. The interlock now verifies the command and the selected power
+path. Subsequent trials reached boost soft-start complete but sampled stale
+USBIN voltages (39 mV and 1.50 V) and shut the boost back off. A trace showed
+that RRADC was accepting status `0x01`; the USBIN voltage path now waits for
+both reading bits (`0x03`), as in Xiaomi's RRADC driver.
 
-The host side just needs an address on that subnet. That gives a low-latency USB
-link that works without Wi-Fi, useful as a fallback path and for file transfer.
-It is applied at boot and verified across a reboot.
+On temporary kernel `#72`, an aigo U330 (`325d:6410`) enumerated at High-Speed
+on three insertions, with both partitions (`sdg1`, `sdg2`) visible each time.
+The PMIC ADC read 5.039 V, the regulator limit was set to 500 mA (not a load
+measurement), and the boost was disabled on each detach. With the corrected
+unit and rule in `/run`, UDC reappearance automatically ran the gadget helper
+successfully. The PC regained ACM and NCM without a reboot (three IPv6 replies),
+and USB input reported online with about 0.48 A input current. The image mounted
+the existing ext4 root by its UUID; neither boot nor userdata was flashed.
+The drive was not mounted. USB PD and SuperSpeed are outside this test.
 
 ## Wi-Fi hotspot: works, off unless started by hand
 

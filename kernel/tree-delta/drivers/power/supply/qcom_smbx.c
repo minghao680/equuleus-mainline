@@ -10,16 +10,20 @@
 
 #include <linux/bits.h>
 #include <linux/devm-helpers.h>
+#include <linux/extcon-provider.h>
 #include <linux/iio/consumer.h>
 #include <linux/interrupt.h>
+#include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/minmax.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm_wakeirq.h>
 #include <linux/of.h>
 #include <linux/power_supply.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -77,8 +81,31 @@ enum smb_generation {
 #define SMB5_CHARGE_RCHG_SOC_THRESHOLD_CFG_REG		0x7D
 #define SMB5_CHARGE_RCHG_SOC_THRESHOLD_CFG_MASK		GENMASK(7, 0)
 
+#define SMB2_OTG_STATUS					0x109
+#define SMB2_OTG_SOFTSTART_DONE				BIT(3)
+#define SMB2_OTG_STATE_MASK				GENMASK(2, 0)
+#define SMB2_OTG_STATE_ENABLED				0x2
+#define SMB2_OTG_RT_STATUS				0x110
+#define SMB2_OTG_RT_FAULTS				GENMASK(2, 0)
 #define OTG_CFG						0x153
 #define OTG_EN_SRC_CFG_BIT				BIT(1)
+
+#define SMB2_TYPE_C_STATUS_2				0x30c
+#define SMB2_TYPE_C_DFP_MASK				GENMASK(3, 0)
+#define SMB2_TYPE_C_DFP_RD_OPEN				BIT(3)
+#define SMB2_TYPE_C_DFP					BIT(7)
+#define SMB2_TYPE_C_VBUS_PRESENT			BIT(6)
+#define SMB2_TYPE_C_VBUS_ERROR				BIT(5)
+#define SMB2_TYPE_C_DEBOUNCED				BIT(4)
+#define SMB2_TYPE_C_ATTACHED				BIT(0)
+#define SMB2_USBIN_RT_STATUS				0x310
+#define SMB2_USBIN_PLUGIN				BIT(4)
+#define SMB2_USBIN_OV					BIT(3)
+#define SMB2_USBIN_LT_3P6V				BIT(1)
+#define SMB2_TYPE_C_IRQ_ENABLE				0x367
+#define SMB2_TYPE_C_OTG_IRQS				(GENMASK(7, 5) | GENMASK(3, 0))
+#define SMB2_TYPE_C_RP_CFG				0x359
+#define SMB2_TYPE_C_RP_1P5A				BIT(0)
 
 #define APSD_STATUS					0x307
 #define APSD_DTC_STATUS_DONE_BIT			BIT(0)
@@ -248,6 +275,16 @@ struct smb_chip {
 	struct iio_channel *usb_in_v_chan;
 
 	struct power_supply *chg_psy;
+
+	/* Serialized USB input policy and the optional PMI8998 OTG path. */
+	struct mutex otg_lock;
+	struct extcon_dev *otg_edev;
+	struct regulator *otg_vbus;
+	bool input_suspend_requested;
+	bool otg_inhibit_input;
+	bool otg_powered;
+	bool otg_fault;
+	bool otg_ready;
 };
 
 struct smb_match_data {
@@ -630,16 +667,292 @@ static int smb_get_property(struct power_supply *psy,
 	}
 }
 
+/* The PMI8998 Type-C block resolves Rp/Rd in hardware. This path handles
+ * USB data roles and default 5 V VBUS for ordinary Rd/Open attachments.
+ */
+static const unsigned int smb_otg_cables[] = {
+	EXTCON_USB, EXTCON_USB_HOST, EXTCON_NONE,
+};
+
+static int smb_otg_read_cc(struct smb_chip *chip, unsigned int *status,
+			   bool *source)
+{
+	u8 cc[3];
+	int ret;
+
+	ret = regmap_bulk_read(chip->regmap, chip->base + SMB2_TYPE_C_STATUS_2,
+			       cc, sizeof(cc));
+	if (ret)
+		return ret;
+
+	*status = cc[2];
+	*source = (cc[2] & (SMB2_TYPE_C_ATTACHED | SMB2_TYPE_C_DEBOUNCED |
+			    SMB2_TYPE_C_DFP | SMB2_TYPE_C_VBUS_ERROR)) ==
+		  (SMB2_TYPE_C_ATTACHED | SMB2_TYPE_C_DEBOUNCED | SMB2_TYPE_C_DFP) &&
+		  (cc[0] & SMB2_TYPE_C_DFP_MASK) == SMB2_TYPE_C_DFP_RD_OPEN;
+	return 0;
+}
+
+static int smb_set_input_suspend(struct smb_chip *chip, bool suspended)
+{
+	return regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
+				  USBIN_SUSPEND_BIT,
+				  suspended ? USBIN_SUSPEND_BIT : 0);
+}
+
+static void smb_otg_stop(struct smb_chip *chip)
+{
+	int ret;
+
+	if (chip->otg_powered) {
+		ret = regulator_disable(chip->otg_vbus);
+		if (ret) {
+			chip->otg_fault = true;
+			dev_err(chip->dev, "failed to disable OTG VBUS: %d\n", ret);
+			return;
+		}
+		chip->otg_powered = false;
+		dev_info(chip->dev, "OTG VBUS disabled\n");
+	}
+
+	if (!chip->otg_inhibit_input)
+		return;
+
+	ret = smb_set_input_suspend(chip, chip->input_suspend_requested);
+	if (ret)
+		dev_err(chip->dev, "failed to restore USB input policy: %d\n", ret);
+	else
+		chip->otg_inhibit_input = false;
+}
+
+static int smb_otg_start(struct smb_chip *chip)
+{
+	unsigned int cc, stat = 0;
+	bool source;
+	int ret, uv, attempt;
+
+	/* Check vSafe0V using the ADC directly. The power supply property
+	 * reports zero when it is not charging and cannot be used here.
+	 */
+	ret = iio_read_channel_processed(chip->usb_in_v_chan, &uv);
+	if (ret) {
+		dev_warn(chip->dev, "OTG pre-boost voltage sample failed: %d\n", ret);
+		return ret;
+	}
+	if (uv < 0 || uv >= 800000) {
+		dev_warn(chip->dev, "OTG pre-boost VBUS outside safe-zero range: %d uV\n", uv);
+		return -EBUSY;
+	}
+
+	ret = smb_set_input_suspend(chip, true);
+	if (ret)
+		return ret;
+	chip->otg_inhibit_input = true;
+
+	/* With USB disconnected, the command bit latches while the PMIC
+	 * reports the battery path and leaves USBIN_SUSPEND_STS clear.
+	 */
+	ret = regmap_read(chip->regmap, chip->base + USBIN_CMD_IL, &stat);
+	if (ret)
+		return ret;
+	if (!(stat & USBIN_SUSPEND_BIT)) {
+		dev_warn(chip->dev, "OTG input suspend command did not latch\n");
+		return -EIO;
+	}
+	ret = regmap_read_poll_timeout(chip->regmap,
+				       chip->base + POWER_PATH_STATUS(chip), stat,
+				       !(stat & P_PATH_USE_USBIN_BIT), 1000, 20000);
+	if (ret) {
+		dev_warn(chip->dev, "OTG input path did not release: %d\n", ret);
+		return ret;
+	}
+
+	ret = regmap_read(chip->regmap, chip->base + SMB2_USBIN_RT_STATUS, &stat);
+	if (ret)
+		return ret;
+	if (stat & SMB2_USBIN_PLUGIN)
+		return -EBUSY;
+
+	ret = smb_otg_read_cc(chip, &cc, &source);
+	if (ret)
+		return ret;
+	if (!source || (cc & SMB2_TYPE_C_VBUS_PRESENT))
+		return -EBUSY;
+
+	ret = regulator_enable(chip->otg_vbus);
+	if (ret)
+		return ret;
+	chip->otg_powered = true;
+
+	ret = regmap_read_poll_timeout(chip->regmap,
+				       chip->base + SMB2_OTG_STATUS, stat,
+				       (stat & SMB2_OTG_SOFTSTART_DONE) &&
+				       (stat & SMB2_OTG_STATE_MASK) == SMB2_OTG_STATE_ENABLED,
+				       2000, 120000);
+	if (ret) {
+		dev_warn(chip->dev, "OTG boost did not become ready: %d (status %#x)\n",
+			 ret, stat);
+		return ret;
+	}
+
+	/* Soft-start covers the converter; wait for the actual USBIN voltage
+	 * comparator as well. TYPE_C_STATUS_4's VBUS bit is gated in source
+	 * mode. The RRADC can still have a pre-boost reading ready at first.
+	 */
+	ret = regmap_read_poll_timeout(chip->regmap,
+				       chip->base + SMB2_USBIN_RT_STATUS, stat,
+				       !(stat & SMB2_USBIN_LT_3P6V) ||
+				       (stat & SMB2_USBIN_OV), 2000, 120000);
+	if (ret || (stat & SMB2_USBIN_OV)) {
+		dev_warn(chip->dev, "OTG VBUS comparator not ready: %d (USBIN %#x)\n",
+			 ret, stat);
+		return ret ?: -ERANGE;
+	}
+
+	for (attempt = 0; attempt < 5; attempt++) {
+		ret = smb_otg_read_cc(chip, &cc, &source);
+		if (ret || !source)
+			return ret ?: -ENOLINK;
+
+		ret = regmap_read(chip->regmap, chip->base + SMB2_OTG_RT_STATUS, &stat);
+		if (ret || (stat & SMB2_OTG_RT_FAULTS))
+			return ret ?: -EIO;
+
+		usleep_range(15000, 20000);
+		ret = iio_read_channel_processed(chip->usb_in_v_chan, &uv);
+		if (ret) {
+			dev_warn(chip->dev, "OTG boosted voltage sample failed: %d\n", ret);
+			return ret;
+		}
+		if (uv >= 4750000 || uv < 0)
+			break;
+	}
+	if (uv < 4750000 || uv > 5500000) {
+		dev_warn(chip->dev, "OTG boosted VBUS outside 5 V range: %d uV\n", uv);
+		return -ERANGE;
+	}
+
+	ret = smb_otg_read_cc(chip, &cc, &source);
+	if (ret || !source)
+		return ret ?: -ENOLINK;
+	ret = regmap_read(chip->regmap, chip->base + SMB2_OTG_RT_STATUS, &stat);
+	if (ret || (stat & SMB2_OTG_RT_FAULTS))
+		return ret ?: -EIO;
+
+	dev_info(chip->dev, "OTG VBUS enabled at %d uV\n", uv);
+	return 0;
+}
+
+static void smb_otg_report_role(struct smb_chip *chip, bool host, bool device)
+{
+	bool old_host = extcon_get_state(chip->otg_edev, EXTCON_USB_HOST) > 0;
+	bool old_device = extcon_get_state(chip->otg_edev, EXTCON_USB) > 0;
+
+	if (old_host == host && old_device == device)
+		return;
+
+	/* Both DWC3 legacy glue and core listen for HOST. Emit it last so
+	 * the glue leaves its VBUS session override in the right mode.
+	 */
+	extcon_set_state(chip->otg_edev, EXTCON_USB, device);
+	extcon_set_state(chip->otg_edev, EXTCON_USB_HOST, host);
+	if (old_device != device)
+		extcon_sync(chip->otg_edev, EXTCON_USB);
+	extcon_sync(chip->otg_edev, EXTCON_USB_HOST);
+}
+
+static void smb_otg_update(struct smb_chip *chip, bool fault)
+{
+	unsigned int cc;
+	bool source, sink;
+	int ret;
+
+	mutex_lock(&chip->otg_lock);
+	if (!chip->otg_ready)
+		goto unlock;
+
+	ret = smb_otg_read_cc(chip, &cc, &source);
+	if (ret) {
+		dev_err_ratelimited(chip->dev, "failed to sample USB-C CC: %d\n", ret);
+		chip->otg_fault = true;
+		goto off;
+	}
+
+	if (!(cc & SMB2_TYPE_C_ATTACHED))
+		chip->otg_fault = false;
+	else if (fault || (cc & SMB2_TYPE_C_VBUS_ERROR))
+		chip->otg_fault = true;
+
+	if (source && !chip->otg_fault) {
+		if (!chip->otg_powered) {
+			ret = smb_otg_start(chip);
+			if (ret) {
+				dev_warn(chip->dev, "OTG source start failed: %d\n", ret);
+				chip->otg_fault = true;
+				goto off;
+			}
+		}
+		smb_otg_report_role(chip, true, false);
+		goto unlock;
+	}
+
+	sink = (cc & (SMB2_TYPE_C_ATTACHED | SMB2_TYPE_C_DEBOUNCED |
+		      SMB2_TYPE_C_DFP | SMB2_TYPE_C_VBUS_PRESENT)) ==
+	       (SMB2_TYPE_C_ATTACHED | SMB2_TYPE_C_DEBOUNCED | SMB2_TYPE_C_VBUS_PRESENT);
+	smb_otg_stop(chip);
+	smb_otg_report_role(chip, false, sink && !chip->otg_powered);
+	goto unlock;
+
+off:
+	smb_otg_stop(chip);
+	smb_otg_report_role(chip, false, false);
+unlock:
+	mutex_unlock(&chip->otg_lock);
+}
+
+static irqreturn_t smb_otg_cc_irq(int irq, void *data)
+{
+	smb_otg_update(data, false);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t smb_otg_fault_irq(int irq, void *data)
+{
+	struct smb_chip *chip = data;
+
+	dev_warn_ratelimited(chip->dev, "OTG hardware fault; disconnect accessory to rearm\n");
+	smb_otg_update(chip, true);
+	return IRQ_HANDLED;
+}
+
+static void smb_otg_cleanup(void *data)
+{
+	struct smb_chip *chip = data;
+
+	mutex_lock(&chip->otg_lock);
+	chip->otg_ready = false;
+	smb_otg_stop(chip);
+	smb_otg_report_role(chip, false, false);
+	mutex_unlock(&chip->otg_lock);
+}
+
 static int smb_set_property(struct power_supply *psy,
 			     enum power_supply_property psp,
 			     const union power_supply_propval *val)
 {
 	struct smb_chip *chip = power_supply_get_drvdata(psy);
+	bool suspend;
+	int ret;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
-		return regmap_update_bits(chip->regmap, chip->base + USBIN_CMD_IL,
-					  USBIN_SUSPEND_BIT, !val->intval);
+		suspend = !val->intval;
+		mutex_lock(&chip->otg_lock);
+		ret = smb_set_input_suspend(chip, suspend || chip->otg_inhibit_input);
+		if (!ret)
+			chip->input_suspend_requested = suspend;
+		mutex_unlock(&chip->otg_lock);
+		return ret;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		return smb_set_current_limit(chip, val->intval);
 	default:
@@ -934,6 +1247,10 @@ static int smb_init_hw(struct smb_chip *chip, const struct smb_init_register *in
 	int rc, i;
 
 	for (i = 0; i < len; i++) {
+		/* A separate regulator owns the OTG block on this board. */
+		if (init_seq[i].addr == OTG_CFG && chip->gen == SMB2 &&
+		    device_property_present(chip->dev, "vbus-supply"))
+			continue;
 		dev_dbg(chip->dev, "%d: Writing 0x%02x to 0x%02x\n", i,
 			init_seq[i].val, init_seq[i].addr);
 		rc = regmap_update_bits(chip->regmap,
@@ -971,6 +1288,67 @@ static int smb_init_irq(struct smb_chip *chip, int *irq, const char *name,
 	return 0;
 }
 
+static int smb_otg_init(struct smb_chip *chip)
+{
+	struct device *dev = chip->dev;
+	unsigned int cmd;
+	int ret;
+
+	if (chip->gen != SMB2 || !device_property_present(dev, "vbus-supply"))
+		return 0;
+
+	chip->otg_vbus = devm_regulator_get_optional(dev, "vbus");
+	if (IS_ERR(chip->otg_vbus))
+		return dev_err_probe(dev, PTR_ERR(chip->otg_vbus), "no OTG VBUS regulator\n");
+
+	chip->otg_edev = devm_extcon_dev_allocate(dev, smb_otg_cables);
+	if (IS_ERR(chip->otg_edev))
+		return PTR_ERR(chip->otg_edev);
+
+	ret = devm_extcon_dev_register(dev, chip->otg_edev);
+	if (ret)
+		return ret;
+
+	ret = devm_add_action_or_reset(dev, smb_otg_cleanup, chip);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(chip->regmap, chip->base + USBIN_CMD_IL, &cmd);
+	if (ret)
+		return ret;
+	mutex_lock(&chip->otg_lock);
+	chip->input_suspend_requested = cmd & USBIN_SUSPEND_BIT;
+	mutex_unlock(&chip->otg_lock);
+
+	ret = smb_init_irq(chip, NULL, "type-c-change", smb_otg_cc_irq);
+	if (ret)
+		return ret;
+	ret = smb_init_irq(chip, NULL, "otg-fail", smb_otg_fault_irq);
+	if (ret)
+		return ret;
+	ret = smb_init_irq(chip, NULL, "otg-overcurrent", smb_otg_fault_irq);
+	if (ret)
+		return ret;
+	ret = smb_init_irq(chip, NULL, "otg-disabled", smb_otg_fault_irq);
+	if (ret)
+		return ret;
+
+	ret = regmap_clear_bits(chip->regmap, chip->base + SMB2_TYPE_C_RP_CFG,
+				SMB2_TYPE_C_RP_1P5A);
+	if (ret)
+		return ret;
+	ret = regmap_set_bits(chip->regmap, chip->base + SMB2_TYPE_C_IRQ_ENABLE,
+			      SMB2_TYPE_C_OTG_IRQS);
+	if (ret)
+		return ret;
+
+	mutex_lock(&chip->otg_lock);
+	chip->otg_ready = true;
+	mutex_unlock(&chip->otg_lock);
+	smb_otg_update(chip, false);
+	return 0;
+}
+
 static int smb_probe(struct platform_device *pdev)
 {
 	struct power_supply_config supply_config = {};
@@ -985,6 +1363,7 @@ static int smb_probe(struct platform_device *pdev)
 
 	chip->dev = &pdev->dev;
 	chip->name = pdev->name;
+	mutex_init(&chip->otg_lock);
 
 	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
 	if (!chip->regmap)
@@ -1100,6 +1479,10 @@ static int smb_probe(struct platform_device *pdev)
 		return dev_err_probe(chip->dev, rc,
 				     "Couldn't write fast AICL rerun time");
 
+	rc = smb_otg_init(chip);
+	if (rc)
+		return dev_err_probe(chip->dev, rc, "failed to initialize USB-C OTG\n");
+
 	/* Initialise charger state */
 	schedule_delayed_work(&chip->status_change_work, 0);
 
@@ -1115,8 +1498,17 @@ static const struct of_device_id smb_match_id_table[] = {
 };
 MODULE_DEVICE_TABLE(of, smb_match_id_table);
 
+static void smb_shutdown(struct platform_device *pdev)
+{
+	struct smb_chip *chip = platform_get_drvdata(pdev);
+
+	if (chip->otg_edev)
+		smb_otg_cleanup(chip);
+}
+
 static struct platform_driver qcom_spmi_smb = {
 	.probe = smb_probe,
+	.shutdown = smb_shutdown,
 	.driver = {
 		.name = "qcom-smbx-charger",
 		.of_match_table = smb_match_id_table,

@@ -41,6 +41,12 @@ find . -type f | while read -r f; do
     echo "  $rel"
 done
 
+# Keep the RRADC change small so it can be rebased without replacing the driver.
+RRADC_PATCH=$REPO/kernel/patches/rradc-wait-for-usbin-sample.patch
+if ! git -C "$KERNEL_SRC" apply --reverse --check "$RRADC_PATCH" 2>/dev/null; then
+    git -C "$KERNEL_SRC" apply "$RRADC_PATCH"
+fi
+
 # The fuel gauge driver and the charger need to be reachable from the build.
 say "wiring the added drivers into Kconfig and Makefile"
 PS=$KERNEL_SRC/drivers/power/supply

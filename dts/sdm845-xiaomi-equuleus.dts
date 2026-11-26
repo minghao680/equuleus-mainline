@@ -707,9 +707,32 @@
 	};
 };
 
+&pmi8998_lsid0 {
+	pmi8998_vbus: usb-vbus-regulator@1100 {
+		compatible = "qcom,pmi8998-vbus-reg";
+		reg = <0x1100>;
+		regulator-name = "usb-c-vbus";
+		regulator-min-microamp = <500000>;
+		regulator-max-microamp = <500000>;
+	};
+};
+
 &pmi8998_charger {
 	status = "okay";
 	monitored-battery = <&battery>;
+	vbus-supply = <&pmi8998_vbus>;
+
+	interrupts = <0x2 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
+		     <0x2 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
+		     <0x2 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
+		     <0x2 0x13 0x6 IRQ_TYPE_EDGE_RISING>,
+		     <0x2 0x13 0x7 IRQ_TYPE_EDGE_RISING>,
+		     <0x2 0x11 0x0 IRQ_TYPE_EDGE_RISING>,
+		     <0x2 0x11 0x1 IRQ_TYPE_EDGE_RISING>,
+		     <0x2 0x11 0x2 IRQ_TYPE_EDGE_RISING>;
+	interrupt-names = "usb-plugin", "bat-ov", "wdog-bark",
+			  "usbin-icl-change", "type-c-change", "otg-fail",
+			  "otg-overcurrent", "otg-disabled";
 };
 
 &pmi8998_fg {
@@ -845,11 +868,13 @@
 
 &usb_1 {
 	status = "okay";
+	extcon = <&pmi8998_charger>;
 };
 
 &usb_1_dwc3 {
-	/* Until we have Type C hooked up we'll force this as peripheral. */
-	dr_mode = "peripheral";
+	dr_mode = "otg";
+	maximum-speed = "high-speed";
+	extcon = <&pmi8998_charger>;
 };
 
 &usb_1_hsphy {
@@ -872,37 +897,9 @@
 	vdda-pll-supply = <&vdda_usb1_ss_core>;
 };
 
+/* Keep the secondary USB controller disabled as in the stock device tree. */
 &usb_2 {
-	status = "okay";
-};
-
-/*
- * The second USB port is wired as a host on this board. The vendor tree sets
- * dr_mode = "host" and drives VBUS through PM8998 GPIO 2, with PM8998 GPIO 8 as
- * the VBUS-detect input; the MTP comment about "no vbus signal" does not apply
- * here. Host mode gives the phone an OTG port that can take keyboards, storage
- * and hubs.
- */
-&usb_2_dwc3 {
-	dr_mode = "host";
-};
-
-&usb_2_hsphy {
-	status = "okay";
-
-	vdd-supply = <&vdda_usb2_ss_core>;
-	vdda-pll-supply = <&vdda_qusb_hs0_1p8>;
-	vdda-phy-dpdm-supply = <&vdda_qusb_hs0_3p1>;
-
-	qcom,imp-res-offset-value = <8>;
-	qcom,hstx-trim-value = <QUSB2_V2_HSTX_TRIM_22_8_MA>;
-};
-
-&usb_2_qmpphy {
-	status = "okay";
-
-	vdda-phy-supply = <&vdda_usb2_ss_1p2>;
-	vdda-pll-supply = <&vdda_usb2_ss_core>;
+	status = "disabled";
 };
 
 &wifi {

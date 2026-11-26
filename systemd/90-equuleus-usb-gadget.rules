@@ -1,0 +1,3 @@
+# DWC3 recreates the UDC on return from host mode. Retain the wants across
+# subsequent binding events, without referring to a transient device alias.
+ACTION!="remove", SUBSYSTEM=="udc", KERNEL=="a600000.usb", TAG+="systemd", ENV{SYSTEMD_WANTS}+="usb-ncm.service"

@@ -75,7 +75,7 @@ install -m 755 "$BUSYBOX" "$WORK/bin/busybox"
 for a in sh ash ls cat mount umount sleep echo mkdir ln dmesg free ps \
          grep sed awk cut tr head tail sync date uname poweroff reboot \
          chmod chown dd df id env which find wc kill \
-         switch_root mountpoint blkid mdev; do
+         switch_root mountpoint blkid mdev readlink; do
     ln -sf /bin/busybox "$WORK/bin/$a"
 done
 ln -sf /bin/busybox "$WORK/sbin/mdev"

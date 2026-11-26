@@ -1,0 +1,15 @@
+diff --git a/drivers/iio/adc/qcom-spmi-rradc.c b/drivers/iio/adc/qcom-spmi-rradc.c
+--- a/drivers/iio/adc/qcom-spmi-rradc.c
++++ b/drivers/iio/adc/qcom-spmi-rradc.c
+@@ -417,6 +417,9 @@ static bool rradc_is_ready(struct rradc_chip *chip,
+ 	ret = regmap_read(chip->regmap, chip->base + chan->status, &status);
+-	if (ret < 0 || !(status & mask))
++	if (ret < 0)
+ 		return false;
+ 
+-	return true;
++	/* USBIN voltage changes during OTG; wait for both reading bits. */
++	if (chan_address == RR_ADC_USBIN_V)
++		return (status & mask) == mask;
++	return status & mask;
+ }
