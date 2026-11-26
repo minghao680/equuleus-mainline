@@ -720,6 +720,50 @@ working panels and must keep their display. `display-off.service` is installed b
 hand on units that want it, and can be disabled through
 `/etc/equuleus/display-off.conf`.
 
+## GPU: usable, after relaxing one firmware gate
+
+The Adreno 630 never initialised, which left no `/dev/dri/renderD128` and made
+Vulkan fall back to `llvmpipe` (software rendering). Two independent causes:
+
+**1. The SQE firmware version gate.** `a6xx_ucode_check_version()` requires
+`buf[0] & 0xfff >= 0x190` (or the patched-firmware signature) and refuses to
+continue otherwise. The only a630 SQE firmware that exists for this device
+reports version 0 there, so the check always failed:
+
+```
+adreno 5000000.gpu: a630 SQE ucode is too old. Have version 187 need at least 190
+```
+
+That firmware is byte-identical in Xiaomi's own `modem`/`vendor` partitions and
+in linux-firmware, and the newest upstream revision is no better, so there was
+nothing newer to install. The check only gates `has_whereami` - whether a GPU
+fault can report the offending instruction - not rendering. The kernel tree now
+carries a small patch (`kernel/tree-delta/drivers/gpu/drm/msm/adreno/a6xx_gpu.c`)
+that accepts the firmware while **leaving `has_whereami` off**, so the machine
+gets a working GPU and keeps the honest state for this blob:
+
+```
+adreno 5000000.gpu: a630 SQE ucode version 187 is below 0x190, continuing without whereami
+```
+
+**2. The display teardown experiment.** Unbinding the display stack (done to save
+power on a unit with a dead panel) tears down DRM as well, because the GPU is
+bound *through* `msm_dpu` and the DSI output is part of the DRM device. With the
+GPU working, unbinding DSI leaves no `/dev/dri` at all and the GPU disappears
+with it. That experiment was dropped; it only ever looked harmless because the
+GPU was not initialising at the time.
+
+With both addressed:
+
+| | before | after |
+| --- | --- | --- |
+| `/dev/dri` | absent | `card0` + `renderD128` |
+| GPU devfreq | 0 Hz | 257 MHz (scales to 710) |
+| Vulkan | `llvmpipe` | `Turnip Adreno (TM) 630`, driver 25.0.7 |
+
+`has_whereami` being off is a real limitation: a GPU hang will not report the
+faulting instruction. That is the trade for having a GPU at all on this board.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
