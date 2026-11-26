@@ -89,7 +89,7 @@ Type=idle
 EOF
 
 # ADSP uses firmware on the real root. The packaged rmtfs unit owns MPSS startup.
-for unit in adsp-start wifi-mac bluetooth-addr audio-defaults cpu-boost perf-tuning wifi-bdf zram-swap modem-bringup data-bringup; do
+for unit in adsp-start wifi-mac bluetooth-addr audio-defaults cpu-boost perf-tuning wifi-bdf venus-fw zram-swap modem-bringup data-bringup; do
     $SUDO install -m 0644 "$REPO/systemd/$unit.service" "$ROOT/etc/systemd/system/$unit.service"
 done
 # QMI helper that activates the UIM session before ModemManager probes the modem.
@@ -109,7 +109,7 @@ $SUDO install -D -m 0644 "$REPO/systemd/bluetooth.service.d-10-equuleus.conf" \
 # ModemManager resolves the modem's QMI services through the QRTR name service.
 $SUDO install -D -m 0644 "$REPO/systemd/ModemManager-10-equuleus.conf" \
     "$ROOT/etc/systemd/system/ModemManager.service.d/10-equuleus.conf"
-for helper in wifi-mac bluetooth-addr net-stability audio-defaults cpu-boost perf-tuning wifi-bdf zram-swap; do
+for helper in wifi-mac bluetooth-addr net-stability audio-defaults cpu-boost perf-tuning wifi-bdf venus-fw zram-swap; do
     $SUDO install -m 0755 "$REPO/systemd/$helper.sh" "$ROOT/usr/local/sbin/$helper.sh"
 done
 # Tuning for zram-swap.service: size, priority, compressor, swappiness.
@@ -153,7 +153,7 @@ $SUDO systemctl --root="$ROOT" enable serial-getty@ttyGS0.service adsp-start.ser
     bluetooth.service \
     audio-defaults.service cpu-boost.service wifi-bdf.service ssh.service sshd-keygen.service docker.service containerd.service \
     qrtr-ns.service ModemManager.service modem-bringup.service data-bringup.service \
-    zram-swap.service perf-tuning.service
+    zram-swap.service perf-tuning.service venus-fw.service
 $SUDO systemctl --root="$ROOT" set-default multi-user.target
 
 if [[ $BUILD_IMAGE == 1 ]]; then

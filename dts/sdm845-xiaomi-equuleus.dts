@@ -1305,3 +1305,15 @@
 	status = "okay";
 	linux,code = <KEY_VOLUMEDOWN>;
 };
+/*
+ * Hardware video codec (Venus).
+ *
+ * The reserved region the driver needs is already declared above (venus_mem at
+ * 0x95c00000, 5 MiB, matching the vendor layout), and videocc comes up with the
+ * other clock controllers, so enabling the node is all that is needed. The
+ * firmware is the generic qcom/sdm845/venus.mbn from linux-firmware; unlike the
+ * OnePlus 6 this board does not appear to need a per-vendor copy.
+ */
+&venus {
+	status = "okay";
+};

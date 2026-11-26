@@ -1,0 +1,13 @@
+[Unit]
+Description=Install the signed Venus video codec firmware from the modem partition
+Documentation=https://github.com/minghao680/equuleus-mainline
+After=sysinit.target
+Wants=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/venus-fw.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

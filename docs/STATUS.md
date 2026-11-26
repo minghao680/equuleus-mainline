@@ -756,6 +756,46 @@ unbind DSI  ->  /dev/dri empty, GPU devfreq gone, Vulkan gone
 That experiment was dropped permanently. It looked harmless at the time only
 because the GPU was not initialising anyway.
 
+## Video codec (Venus): works, with the phone's own signed firmware
+
+The hardware video block was not built at all: `CONFIG_VIDEO_QCOM_VENUS` and its
+`V4L_MEM2MEM_DRIVERS` parent were missing, and the node was disabled. Enabling
+both is not enough on this handset, because it boots with
+`androidboot.secureboot=1`: Venus authenticates its firmware through PAS in
+TrustZone, and the generic `qcom/venus-5.2/venus.mbn` from linux-firmware is not
+signed for this device, so the load fails with `-EINVAL` and the codec never
+probes. Xiaomi's signed image lives on the `modem` partition.
+
+There is a second trap in how the firmware is loaded. `qcom_mdt_load()` treats the
+file the driver names as an ELF header and then reads each segment from a sibling
+file whose name is that path with the last three characters replaced:
+
+```c
+sprintf(seg_name + strlen(fw_name) - 3, "b%02d", segment);
+/* qcom/venus-5.2/venus.mbn -> qcom/venus-5.2/venus.b02, .b03, ... */
+```
+
+So a single merged blob does not work, and neither does a lone `.mdt`. What works
+is the vendor layout with the header renamed:
+
+```
+/lib/firmware/qcom/venus-5.2/venus.mbn   <- venus.mdt from the modem partition
+/lib/firmware/qcom/venus-5.2/venus.b02   <- exactly p_filesz bytes
+/lib/firmware/qcom/venus-5.2/venus.b03
+/lib/firmware/qcom/venus-5.2/venus.b04
+```
+
+`venus-fw.service` does that extraction from the phone itself, so no vendor
+firmware is redistributed, and it re-probes the device so the codec works without
+a reboot. It is idempotent and skips itself once `/dev/video12` exists.
+
+Result:
+
+| Node | Role | Formats |
+| --- | --- | --- |
+| `/dev/video12` | encoder | NV12 in, H.264/HEVC out |
+| `/dev/video13` | decoder | **H.264, VP8, VP9, HEVC, MPEG-2** |
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
