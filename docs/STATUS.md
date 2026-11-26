@@ -556,6 +556,40 @@ the cpufreq LUT registers and inventing voltages; the GPU is already at its
 highest OPP (710 MHz), and climbing beyond that needs an RPMh level above
 `TURBO_L1`, which this board may not have fused.
 
+## Buttons: power key as shipped, volume keys usable as hotkeys
+
+The power key was already working and is left alone: `pm8998_pwrkey` reports
+`KEY_POWER` and `systemd-logind` keeps its default poweroff action.
+
+The two volume keys were not registered at all until they were added to the
+board device tree. Their wiring comes from the vendor tree, and the split is
+easy to get wrong because only one of them is a real GPIO:
+
+| Key | Hardware | Device tree |
+| --- | --- | --- |
+| Volume up | PM8998 GPIO 6, active low | `gpio-keys` entry `key-vol-up`, `KEY_VOLUMEUP` |
+| Volume down | PMIC PON "resin" (`pon_2`) | `&pm8998_resin` enabled with `linux,code = <KEY_VOLUMEDOWN>` |
+
+Volume down is not on a GPIO at all - the vendor PON node reports `pon_2` with
+keycode 0x72, which is `KEY_VOLUMEDOWN`. Mainline ships `pm8998_resin` disabled,
+so enabling it plus a keycode is enough; the driver already reads `linux,code`
+and reports it like any other key.
+
+Both now appear as ordinary input devices, which is all a hotkey daemon needs:
+
+```
+/dev/input/event2  pm8941_resin   KEY_VOLUMEDOWN  (press/release)
+/dev/input/event3  Volume keys    KEY_VOLUMEUP    (press/release/autorepeat)
+```
+
+The `gpio-keys` entry carries `autorepeat`, so holding volume up repeats like a
+real key. Assigning actions to these events (`keyd`, `triggerhappy`, or a small
+systemd unit reading the event device) is left to the user.
+
+Note that volume down doubles as the bootloader's recovery entry when held
+during boot; that is firmware behaviour and is unaffected by the click at
+runtime.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into

@@ -9,6 +9,8 @@
 
 #include <dt-bindings/clock/qcom,camcc-sdm845.h>
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/spmi/spmi.h>
 #include <dt-bindings/sound/qcom,q6afe.h>
@@ -1256,4 +1258,50 @@
 			};
 		};
 	};
+};
+/*
+ * Volume keys, for use as custom hotkeys.
+ *
+ * The power key is left alone: pm8998_pwrkey already reports KEY_POWER and
+ * systemd-logind keeps its default poweroff action.
+ *
+ * Volume up hangs off PM8998 GPIO 6 (active low) - the vendor tree labels it
+ * "volume_up" and OnePlus 6, which uses the same PMIC, wires it to the same pin.
+ * Volume down is not a GPIO at all: it is the PMIC's "resin" input, which the
+ * vendor PON node reports as pon_2 with KEY_VOLUMEDOWN. Mainline ships that node
+ * disabled, so it only needs enabling plus a keycode.
+ */
+&pm8998_gpios {
+	key_vol_up_default: pm8998-gpio6-state {
+		pinconf {
+			pins = "gpio6";
+			function = "normal";
+			input-enable;
+			bias-pull-up;
+			qcom,drive-strength = <PMIC_GPIO_STRENGTH_NO>;
+		};
+	};
+};
+
+/ {
+	gpio-keys {
+		compatible = "gpio-keys";
+		label = "Volume keys";
+		autorepeat;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&key_vol_up_default>;
+
+		key-vol-up {
+			label = "Volume up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&pm8998_gpios 6 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+		};
+	};
+};
+
+&pm8998_resin {
+	status = "okay";
+	linux,code = <KEY_VOLUMEDOWN>;
 };
