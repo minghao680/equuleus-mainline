@@ -491,13 +491,39 @@ What was tried and ruled out:
 * driving the enable pins by hand to keep the sensor powered is impossible: the
   fixed regulators claim those GPIOs at probe.
 
-One thing to not repeat: marking `cam0_vana` `regulator-always-on` hangs the
-boot. Its `vin-supply` is PM8998 L22, an RPMh regulator, and forcing that on
-during early boot deadlocks; a plain GPIO switch does not have that problem.
+### Two things that hang the boot - do not retry these
 
-Next step: park VIO (TLMM 75) as a gpio-hog or a plain always-on fixed regulator
-so the bus pull-ups are powered from boot, then scan the CCI bus for the EEPROM
-at 0x50 - that tells us whether the bus works before chasing the sensor again.
+1. Marking `cam0_vana` `regulator-always-on` while its `vin-supply` is PM8998
+   L22. That rail is an RPMh regulator, and enabling one during early boot
+   deadlocks the device.
+2. **Driving TLMM GPIO 40.** Two separate images that touched that pin (once
+   from the sensor driver's power-on, once as `regulator-boot-on`) both failed
+   to boot; every image that leaves it alone boots. The vendor sensor node shows
+   why this pin is special - its power table is
+
+   ```
+   CAMIF_MCLK0 = TLMM 13
+   CAM_RESET0  = TLMM 80
+   CAM_VANA0   = TLMM 102
+   CAM_VDIG0   = PM8998 GPIO 11
+   CAM_CUSTOM0 = TLMM 40     <- not a supply, an auxiliary/unknown signal
+   ```
+
+   GPIO 40 is `CAM_CUSTOM0`, not the 2.8 V analog rail. An earlier pass
+   (including a subagent report) read it as "avdd 2.8" from a differently named
+   pinctrl group and wired VANA to it; the board then failed to boot twice.
+
+### Where it stands
+
+The camera sensor is correctly wired in the device tree as far as the vendor
+data goes (VANA = TLMM 102, VDIG = TLMM 99 behind PM8998 GPIO 11, VIO = TLMM
+75, reset = TLMM 80, MCLK0 = 24 MHz, address 0x10 on CCI master 0), CAMSS and
+CCI come up and the sensor binds, but every transfer on both CCI buses times
+out rather than NACKs, with SDA held low by something on the bus.
+
+Camera work is parked here. The remaining suspects are physical - the camera
+flex or connector on a unit whose panel has been replaced - rather than
+something the device tree can express.
 
 ## Wi-Fi hotspot: works, off unless started by hand
 
