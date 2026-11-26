@@ -13,7 +13,7 @@ and Samsung EA8074 panel driver in this repository.
 | USB access | Serial console on `ttyGS0`, with automatic root login |
 | Wi-Fi | The factory address is read from `persist`. A 5 GHz test reached about 66 Mb/s and its short pings had zero loss. |
 | Bluetooth | UART6 uses RTS/CTS. Configuring the factory address brought up `hci0` and a scan found nearby devices. |
-| CPU | `qcom-cpufreq-hw` reached 1.77 GHz on the little cores and 2.65 GHz on the big cores |
+| CPU | `qcom-cpufreq-hw` reached 1.77 GHz on the little cores and 2.65 GHz on the big cores. `cpu-boost.service` lifts the big cluster to the 2.8032 GHz boost OPP for single-thread workloads; see [docs/STATUS.md](docs/STATUS.md). |
 | GPU | Mesa Freedreno FD630 ran glmark2, and Turnip exposed Vulkan 1.3 |
 | Audio | Playback through the TAS2557 amplifier and capture from the AMIC3 microphone, both set up by `audio-defaults.service`. |
 | Vibration | The PMI8998 haptics block drives the motor and accepts force-feedback effects. |

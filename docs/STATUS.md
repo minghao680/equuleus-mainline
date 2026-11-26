@@ -525,6 +525,37 @@ Camera work is parked here. The remaining suspects are physical - the camera
 flex or connector on a unit whose panel has been replaced - rather than
 something the device tree can express.
 
+## CPU: 2.8 GHz for single-thread work
+
+The big cluster's cpufreq hardware LUT contains a **2.8032 GHz** entry. Mainline's
+`qcom-cpufreq-hw` marks that entry `CPUFREQ_BOOST_FREQ` and leaves boost off, so
+the default ceiling is 2.6496 GHz.
+
+Turning boost on is not enough by itself. `schedutil` derives its next request
+from the frequency the CPU is already running at, so it never asks for more than
+the current frequency and the boost OPP is never selected - measured under both
+a single-threaded and an eight-threaded load, the frequency stayed at 2.6496 GHz
+with boost enabled. What does reach it is a governor that requests the policy
+maximum:
+
+| Configuration | Highest observed | Single-thread | Idle temperature |
+| --- | --- | --- | --- |
+| `schedutil`, boost off (default) | 2.6496 GHz | 228,479 | 50 C |
+| `schedutil`, boost on | 2.6496 GHz | unchanged | 50 C |
+| `ondemand`, boost on | 2.8032 GHz | 233,787 (+2.3%) | - |
+| `performance`, boost on | 2.8032 GHz | 235,561 (**+3.1%**) | 48-50 C |
+
+`cpu-boost.service` applies `BOOST=1` plus `GOVERNOR=performance` from
+`/etc/equuleus/cpu-boost.conf`, and verifies after reboot that both clusters sit
+at their maximum. Set `POLICIES=big` in that file to pin only the gold cores and
+leave the little ones on `schedutil`.
+
+The voltage for the boost OPP comes from the hardware LUT, so this is a fused
+operating point, not an overclock. Anything above 2.8032 GHz would mean writing
+the cpufreq LUT registers and inventing voltages; the GPU is already at its
+highest OPP (710 MHz), and climbing beyond that needs an RPMh level above
+`TURBO_L1`, which this board may not have fused.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into

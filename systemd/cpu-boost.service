@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable the SDM845 cpufreq boost OPP and the performance governor
+Documentation=https://github.com/minghao680/equuleus-mainline
+After=sysinit.target
+Wants=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cpu-boost.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
