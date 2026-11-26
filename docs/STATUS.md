@@ -666,6 +666,13 @@ is recovery after the fact - the platform device can be re-probed from userspace
 (`/sys/bus/platform/drivers/ath10k_snoc/{unbind,bind}`), which was measured
 bringing `wlan0` back in about four seconds after an unbind.
 
+Automating that was considered and dropped. WLAN bring-up here is slow and does
+not finish at a predictable moment, and an absent `wlan0` does not mean failure:
+the interface may simply not be wanted yet. A boot-time watchdog cannot tell
+those apart, so it would risk re-probing a perfectly healthy device - or worse,
+rebooting a device whose owner deliberately kept it offline. Recovery stays
+manual: if `wlan0` never shows up, unbind and bind the platform device by hand.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
