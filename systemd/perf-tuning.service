@@ -1,0 +1,14 @@
+[Unit]
+Description=Runtime performance tuning (big-core idle latency, UFS gear and queue)
+Documentation=https://github.com/minghao680/equuleus-mainline
+After=sysinit.target
+Wants=sysinit.target
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/perf-tuning.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

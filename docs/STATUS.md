@@ -673,6 +673,53 @@ those apart, so it would risk re-probing a perfectly healthy device - or worse,
 rebooting a device whose owner deliberately kept it offline. Recovery stays
 manual: if `wlan0` never shows up, unbind and bind the platform device by hand.
 
+### Latency and storage tuning (`perf-tuning.service`)
+
+Two runtime settings, both measured on this unit:
+
+| Setting | Measurement |
+| --- | --- |
+| Disable `cpu-sleep` (885 us exit latency) on the four gold cores | ping average 1.94/1.90/2.26 ms -> **1.19/1.16/1.17 ms**; jitter (mdev) 1.01/1.13/2.22 ms -> **0.58/0.10/0.12 ms** |
+| Hold UFS at its top gear, `scheduler=none`, `nr_requests=32`, `read_ahead=512K` | raw 200 MiB direct read 1079 -> **1335 MiB/s** |
+
+The silver cores keep their deep idle state, so this does not turn the box into
+an idle-power hog. Everything is re-applied at boot and is safe on any equuleus.
+
+### zram swap (`zram-swap.service`)
+
+The kernel already carries zram with zstd, but nothing configured the device, so
+the machine ran with **no swap at all** - a memory spike would have killed it
+rather than slowed it down. The unit sets a 3.7 GB area (50% of RAM, priority
+100, swappiness 150).
+
+**A trap worth remembering:** zram swap together with transparent huge pages set
+to `always` wedges this kernel. `khugepaged` ends up blocked on I/O and drags
+kworkers - and eventually pid 1 - into uninterruptible sleep; the box then shows
+a load of exactly 4.00 with no CPU use and stops answering. That was reproduced
+here once. The unit therefore forces `THP=madvise` and `khugepaged/defrag=0`
+before enabling swap, which is why THP is no longer `always`.
+
+### TCP: BBR and fq
+
+`CONFIG_TCP_CONG_BBR` and `CONFIG_NET_SCH_FQ` were not built; both are now
+enabled and `/etc/sysctl.d/90-equuleus-network.conf` sets
+`tcp_congestion_control=bbr` with `default_qdisc=fq`. BBR is the right choice for
+a Wi-Fi link with variable bandwidth and loss; on a short-range 5 GHz link it
+measured no faster than westwood, which is expected - its benefit shows up with
+real loss and distance, not at 866 Mbit/s a few metres from the AP.
+
+### Display: suspended on a dead panel (per-unit, not in the image)
+
+This unit's AMOLED is broken, so the DPU kept scanning out to nothing and the
+three display devices stayed runtime-active. Unbinding them once and letting them
+re-bind leaves the stack `suspended`, which measured about 3 C cooler on the gold
+cluster (52.1 -> ~48-49 C) with DRM still functional.
+
+That is deliberately **not** part of the shared image: other equuleus units have
+working panels and must keep their display. `display-off.service` is installed by
+hand on units that want it, and can be disabled through
+`/etc/equuleus/display-off.conf`.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into

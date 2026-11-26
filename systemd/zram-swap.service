@@ -1,0 +1,14 @@
+[Unit]
+Description=zram-backed swap
+Documentation=https://github.com/minghao680/equuleus-mainline
+After=sysinit.target
+Before=swap.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zram-swap.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=swap.target
