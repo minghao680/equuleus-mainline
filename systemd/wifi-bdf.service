@@ -1,0 +1,14 @@
+[Unit]
+Description=Install the device's own WLAN board data (BDF) from the modem partition
+Documentation=https://github.com/minghao680/equuleus-mainline
+After=sysinit.target
+Wants=sysinit.target
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-bdf.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

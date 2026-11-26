@@ -590,6 +590,56 @@ Note that volume down doubles as the bootloader's recovery entry when held
 during boot; that is firmware behaviour and is unaffected by the click at
 runtime.
 
+### WLAN board data: the phone carries its own calibration
+
+linux-firmware's `board-2.bin` for WCN3990 is built from Qualcomm reference
+boards. For this phone that meant the DB845C calibration was used, even though
+Xiaomi ships a BDF tuned for its own RF front end.
+
+Which file the vendor driver picks is decided by the board id from the WLAN
+firmware capability message - both mainline and Xiaomi read the same QMI field,
+and both default to `0xFF` when it is absent:
+
+```
+board_id == 0xFF  ->  bdwlan.bin
+otherwise         ->  bdwlan.b<board_id>
+```
+
+This unit reports `board_id 0xff` (and `chip_id 0x30214`, which matches the
+`qmi-chip-id=30214` used in the firmware's own entry names, so the parsing is
+sound). The phone stores the result on its `modem` partition: `image/bdwlan.bin`
+is 26328 bytes, and 28 more `image/bdwlan.bXX` files at 19152 bytes each belong
+to other board ids sharing the same modem image.
+
+Mainline asks the firmware for the entry named
+`bus=snoc,qmi-board-id=ff,qmi-chip-id=30214`, and linux-firmware answers with a
+**19152-byte** blob. Xiaomi's `bdwlan.bin` is **26328 bytes** with the same header
+and 28% of its bytes differing, spread evenly through the RF parameter region -
+the same format, calibrated for this antenna and front end.
+
+`wifi-bdf.service` closes that gap without redistributing anything: it finds the
+partition by name (never a hardcoded device node), mounts it read-only, copies
+`image/bdwlan.bin` into both matching entries of `board-2.bin`, keeps the
+original as `board-2.bin.equuleus-orig`, and re-probes the platform device so the
+new data is used. It is idempotent - the entry data is compared by hash and an
+already current file leaves the device untouched - and it runs `Before=
+NetworkManager.service` so the link comes up once, already correct.
+
+Measured on a 5 GHz link a few metres from the AP, before and after:
+
+| | reference BDF | device BDF |
+| --- | --- | --- |
+| signal | -32 dBm | -32 dBm |
+| PHY rate | 866.7 Mbit/s | 866.7 Mbit/s |
+| ping loss / avg | 0% / 2.19 ms | 0% / 1.78 ms |
+| TCP down (median of 3) | 509.5 Mbit/s | 528.3 Mbit/s |
+
+At this distance the link already runs at its maximum PHY rate, so the
+difference is inside the noise - the change is about using the right
+calibration rather than about a measured speed-up. Rolling back is a `cp`:
+restoring `board-2.bin.equuleus-orig` returns the image to the exact stock file
+and re-running the unit re-applies the device data deterministically.
+
 ## Wi-Fi hotspot: works, off unless started by hand
 
 `scripts/hotspot.sh` (installed as `/usr/local/sbin/hotspot`) turns the phone into
