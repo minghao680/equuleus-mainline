@@ -10,6 +10,7 @@
 #include <dt-bindings/clock/qcom,camcc-sdm845.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/spmi/spmi.h>
@@ -1052,6 +1053,31 @@
 
 	status = "okay";
 };
+
+&pmi8998_lpg {
+	status = "okay";
+
+	/* The vendor white status LED uses the PWM at 0xb500 (LPG 5). */
+	led@5 {
+		reg = <5>;
+		color = <LED_COLOR_ID_WHITE>;
+		function = LED_FUNCTION_STATUS;
+		default-state = "off";
+	};
+};
+
+&pmi8998_flash {
+	status = "okay";
+
+	/* Start with one rear torch output (vendor ID 0), without strobe. */
+	led-0 {
+		color = <LED_COLOR_ID_WHITE>;
+		function = LED_FUNCTION_TORCH;
+		led-sources = <1>;
+		led-max-microamp = <50000>;
+	};
+};
+
 /*
  * NFC: NXP PN553 on i2c3. The vendor tree describes it as nq@28 on i2c@88c000,
  * with VEN on GPIO 128, FIRM on GPIO 88 and the interrupt on GPIO 63.
